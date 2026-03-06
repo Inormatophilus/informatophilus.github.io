@@ -45,14 +45,28 @@
   const rating   = $derived(track ? tracksStore.getRating(track.id) : 0);
   const features = $derived(track ? tracksStore.getFeatures(track.id) : []);
 
-  let showQr   = $state(false);
-  let qrChunks = $state<string[]>([]);
+  let showQr      = $state(false);
+  let qrChunks    = $state<string[]>([]);
+  let qrLoading   = $state(false);
 
-  function toggleQr() {
+  // Reset QR when selected track changes
+  $effect(() => {
+    if (!track) { showQr = false; qrChunks = []; }
+    else { showQr = false; qrChunks = []; }
+  });
+
+  async function toggleQr() {
     if (!track) return;
     if (showQr) { showQr = false; return; }
-    qrChunks = encodeTrackToChunks(track);
-    showQr   = true;
+    qrLoading = true;
+    try {
+      // Use features-enriched GPX if available (same as QRShareModal)
+      const gpx = await tracksStore.getGpxWithFeatures(track.id) ?? track.gpxString;
+      qrChunks  = encodeTrackToChunks(track, gpx);
+      showQr    = true;
+    } finally {
+      qrLoading = false;
+    }
   }
 
   // ── Actions ────────────────────────────────────────────────────────────────
@@ -253,16 +267,20 @@
       </button>
 
       <!-- QR Code -->
-      <button class="ts-btn {showQr ? 'ts-btn-primary' : ''}" onclick={toggleQr} title="QR-Code anzeigen">
-        <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
-          <rect x="1" y="1" width="5" height="5" rx="1" stroke="currentColor" stroke-width="1.4"/>
-          <rect x="10" y="1" width="5" height="5" rx="1" stroke="currentColor" stroke-width="1.4"/>
-          <rect x="1" y="10" width="5" height="5" rx="1" stroke="currentColor" stroke-width="1.4"/>
-          <rect x="3" y="3" width="1" height="1" fill="currentColor"/>
-          <rect x="12" y="3" width="1" height="1" fill="currentColor"/>
-          <rect x="3" y="12" width="1" height="1" fill="currentColor"/>
-          <path d="M10 10h2v2h-2zM12 12h3M12 10h3v3" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/>
-        </svg>
+      <button class="ts-btn {showQr ? 'ts-btn-primary' : ''}" onclick={toggleQr} disabled={qrLoading} title="QR-Code anzeigen">
+        {#if qrLoading}
+          <span style="font-size:14px">⏳</span>
+        {:else}
+          <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+            <rect x="1" y="1" width="5" height="5" rx="1" stroke="currentColor" stroke-width="1.4"/>
+            <rect x="10" y="1" width="5" height="5" rx="1" stroke="currentColor" stroke-width="1.4"/>
+            <rect x="1" y="10" width="5" height="5" rx="1" stroke="currentColor" stroke-width="1.4"/>
+            <rect x="3" y="3" width="1" height="1" fill="currentColor"/>
+            <rect x="12" y="3" width="1" height="1" fill="currentColor"/>
+            <rect x="3" y="12" width="1" height="1" fill="currentColor"/>
+            <path d="M10 10h2v2h-2zM12 12h3M12 10h3v3" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/>
+          </svg>
+        {/if}
         QR-Code
       </button>
 

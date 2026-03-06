@@ -9,13 +9,14 @@
 // =============================================================================
 
 import pako from 'pako';
+import qrcodeGenerator from 'qrcode-generator';
 import type { GpxPoint, GmtwTrack, QrChunk, QrChunkBuffer, QrPayloadType } from '$lib/types';
 import { simplifyPoints } from './geo';
-import { parseGpx } from './gpx';
+import { parseGpx, buildGpxString } from './gpx';
 
 // --- Konfiguration -----------------------------------------------------------
 
-export const QR_CHUNK_SIZE = 1100; // Zeichen pro QR-Code (v25–28)
+export const QR_CHUNK_SIZE = 800;  // Zeichen pro QR-Code — 800 für sichere Scan-Zuverlässigkeit
 export const QR_MAX_PTS = 1000;    // Max. Punkte nach RDP-Vereinfachung
 export const QR_VERSION = 1;       // Protokoll-Version
 
@@ -231,15 +232,6 @@ export function detectPayloadType(decoded: unknown): QrPayloadType {
 
 // --- QR-Code Rendering (qrcode-generator) ------------------------------------
 
-declare const qrcode: {
-  (typeNumber: number, errorCorrectionLevel: string): {
-    addData(data: string): void;
-    make(): void;
-    getModuleCount(): number;
-    isDark(row: number, col: number): boolean;
-  };
-};
-
 /** Zeichnet QR-Code auf Canvas-Element */
 export function renderQrCanvas(
   canvas: HTMLCanvasElement,
@@ -248,12 +240,10 @@ export function renderQrCanvas(
   fg = '#000000',
   bg = '#ffffff'
 ): void {
-  if (typeof qrcode === 'undefined') {
-    console.error('qrcode-generator nicht geladen');
-    return;
-  }
   try {
-    const qr = qrcode(0, 'M');
+    // qrcode-generator: CJS default interop (Vite handles it)
+    const qrFn = (qrcodeGenerator as unknown as { default?: typeof qrcodeGenerator }).default ?? qrcodeGenerator;
+    const qr = qrFn(0, 'M');
     qr.addData(data);
     qr.make();
     const modules = qr.getModuleCount();
@@ -320,6 +310,18 @@ export class QRAnimator {
     }
   }
 
+  /** Setzt Animation am aktuellen Frame fort (nach stop()) */
+  resume(): void {
+    if (this.chunks.length === 0 || !this.canvas) return;
+    this.renderCurrent();
+    if (this.chunks.length > 1) {
+      this.timer = setInterval(() => {
+        this.currentIdx = (this.currentIdx + 1) % this.chunks.length;
+        this.renderCurrent();
+      }, 1000 / this.fps);
+    }
+  }
+
   /** Stoppt Animation */
   stop(): void {
     if (this.timer !== null) {
@@ -368,6 +370,152 @@ export function encodeMarkerQr(lat: number, lng: number, name: string): string {
 /** Erzeugt Google-Maps-Link QR */
 export function encodeMapsQr(lat: number, lng: number): string {
   return `https://www.google.com/maps?q=${lat},${lng}`;
+}
+
+// =============================================================================
+// Multi-Format Input Processing
+// GeoJSON, GPX XML, URLs, Compact JSON — unified import pipeline
+// =============================================================================
+
+/**
+ * Konvertiert GeoJSON (FeatureCollection/Feature/LineString/MultiLineString)
+ * in GpxPoints. GeoJSON-Koordinaten: [longitude, latitude, elevation?]
+ */
+export function geojsonToGpxPoints(
+  geojson: unknown
+): { points: GpxPoint[]; name: string } {
+  const g = geojson as Record<string, unknown>;
+  const rootName = (g.name as string) ?? 'GeoJSON Track';
+
+  function coordsToPoints(coords: unknown[]): GpxPoint[] {
+    return (coords as number[][])
+      .filter(c => Array.isArray(c) && c.length >= 2 && !isNaN(c[0]) && !isNaN(c[1]))
+      .map(c => ({
+        lng: c[0],
+        lat: c[1],
+        ele: c[2] !== undefined && !isNaN(c[2]) ? c[2] : undefined,
+      }));
+  }
+
+  function fromGeometry(
+    geo: Record<string, unknown>,
+    n: string
+  ): { points: GpxPoint[]; name: string } | null {
+    if (geo.type === 'LineString') {
+      return { points: coordsToPoints(geo.coordinates as unknown[]), name: n };
+    }
+    if (geo.type === 'MultiLineString') {
+      const all = (geo.coordinates as unknown[][]).flatMap(line => coordsToPoints(line));
+      return { points: all, name: n };
+    }
+    return null;
+  }
+
+  if (g.type === 'FeatureCollection') {
+    for (const f of (g.features as Array<Record<string, unknown>>)) {
+      const geo = f.geometry as Record<string, unknown>;
+      const props = f.properties as Record<string, unknown> | null;
+      const n = (props?.name as string) ?? rootName;
+      const r = fromGeometry(geo, n);
+      if (r && r.points.length >= 2) return r;
+    }
+    throw new Error('GeoJSON FeatureCollection enthält keine Linien-Geometrie');
+  }
+  if (g.type === 'Feature') {
+    const geo = g.geometry as Record<string, unknown>;
+    const props = g.properties as Record<string, unknown> | null;
+    const r = fromGeometry(geo, (props?.name as string) ?? rootName);
+    if (r) return r;
+    throw new Error('GeoJSON Feature enthält keine Linien-Geometrie');
+  }
+  const direct = fromGeometry(g, rootName);
+  if (direct && direct.points.length >= 2) return direct;
+  throw new Error('GeoJSON-Format nicht erkannt');
+}
+
+/**
+ * Baut einen GPX-String aus GpxPoints (thin wrapper um gpx.ts buildGpxString).
+ */
+export function buildGpxFromPoints(points: GpxPoint[], name: string, desc?: string): string {
+  return buildGpxString(points, name, desc);
+}
+
+/**
+ * Universeller Parser: akzeptiert GPX-XML, GeoJSON, GMTW-Compact-JSON.
+ * Gibt immer { gpxStr, name, cat } zurück oder wirft einen Fehler.
+ */
+export function parseAnyFormatToGpx(
+  input: string
+): { gpxStr: string; name: string; cat: string } {
+  const t = input.trim();
+
+  // GPX XML
+  if (t.startsWith('<?xml') || t.startsWith('<gpx') || t.startsWith('<GPX')) {
+    const gpxData = parseGpx(t);
+    return { gpxStr: t, name: gpxData.name, cat: 'custom' };
+  }
+
+  let parsed: unknown;
+  try { parsed = JSON.parse(t); } catch {
+    throw new Error('Unbekanntes Dateiformat — erwartet GPX (XML) oder JSON/GeoJSON');
+  }
+  const obj = parsed as Record<string, unknown>;
+
+  // GeoJSON
+  if (['FeatureCollection', 'Feature', 'LineString', 'MultiLineString'].includes(obj.type as string)) {
+    const { points, name } = geojsonToGpxPoints(parsed);
+    if (points.length < 2) throw new Error('GeoJSON enthält zu wenige Punkte');
+    return { gpxStr: buildGpxFromPoints(points, name), name, cat: 'custom' };
+  }
+
+  // GMTW Compact track (delta-encoded)
+  if (obj.v !== undefined && Array.isArray(obj.lats) && Array.isArray(obj.lngs)) {
+    const decoded = decodeCompactToTrack(t);
+    if (decoded.points.length < 2) throw new Error('Compact-Track hat zu wenige Punkte');
+    return { gpxStr: buildGpxFromPoints(decoded.points, decoded.name), name: decoded.name, cat: decoded.cat };
+  }
+
+  throw new Error('JSON-Format nicht erkannt — kein GeoJSON und kein GMTW-Track');
+}
+
+/**
+ * Holt eine URL (GPX / GeoJSON / JSON) und gibt den GPX-String zurück.
+ * Timeout: 20 Sekunden.
+ */
+export async function fetchAndParseUrl(
+  url: string
+): Promise<{ gpxStr: string; name: string; cat: string }> {
+  const filename = decodeURIComponent(url.split('/').pop() ?? '').replace(/\.[^.]+$/, '') || 'Track';
+
+  let text: string;
+  try {
+    const ctrl = new AbortController();
+    const tid  = setTimeout(() => ctrl.abort(), 20_000);
+    const resp = await fetch(url, { signal: ctrl.signal });
+    clearTimeout(tid);
+    if (!resp.ok) throw new Error(`HTTP ${resp.status} ${resp.statusText}`);
+    text = await resp.text();
+  } catch (e: unknown) {
+    if ((e as Error).name === 'AbortError') throw new Error('Timeout: URL nicht erreichbar (>20s)');
+    throw new Error(`Netzwerkfehler: ${(e as Error).message}`);
+  }
+
+  return parseAnyFormatToGpx(text);
+}
+
+/**
+ * Encodiert beliebige Text-Eingabe (GPX/GeoJSON/JSON) direkt in QR-Chunks.
+ */
+export function encodeAnyFormatToChunks(input: string, nameOverride?: string): string[] {
+  const { gpxStr, name, cat } = parseAnyFormatToGpx(input);
+  const pts = parseGpx(gpxStr).points;
+  const fakeTrack: GmtwTrack = {
+    id: '', name: nameOverride ?? name, cat: cat as GmtwTrack['cat'],
+    color: '#a855f7', gpxString: gpxStr,
+    stats: { distKm: 0, elevGain: 0, elevLoss: 0, maxElev: 0, minElev: 0, durationMs: 0 },
+    visible: true, projectId: '', createdAt: 0,
+  };
+  return encodeTrackToChunks(fakeTrack, gpxStr);
 }
 
 // =============================================================================
