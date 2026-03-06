@@ -1,254 +1,340 @@
 <script lang="ts">
   import { navigationStore } from '$lib/stores/navigation.svelte';
+  import { raceEngine } from '$lib/stores/race.svelte';
 
-  // Kompass-Pfeil-Rotation
-  const arrowStyle = $derived(
-    `transform: rotate(${navigationStore.bearingToNext}deg); transition: transform 0.4s ease;`
+  // Drop below RaceTimer when racing (~106px start + ~108px height + 4px gap)
+  const topPx = $derived(raceEngine.isRacing ? 226 : 106);
+
+  const turnIcon = $derived(
+    navigationStore.turnIndicator === 'left'  ? '↰' :
+    navigationStore.turnIndicator === 'right' ? '↱' : '↑'
   );
 
-  // XTE-Balken: -30m bis +30m → 0-100%
-  const xteClamp = $derived(Math.max(-30, Math.min(30, navigationStore.xte)));
-  const xtePct   = $derived(50 + (xteClamp / 30) * 50); // 0%=links, 50%=mitte, 100%=rechts
+  const turnLabel = $derived(
+    navigationStore.turnIndicator === 'left'  ? 'LINKS'  :
+    navigationStore.turnIndicator === 'right' ? 'RECHTS' : 'AHEAD'
+  );
+
   const xteAbs   = $derived(Math.abs(navigationStore.xte));
   const xteColor = $derived(
-    xteAbs < 3  ? 'var(--ac)' :
+    xteAbs < 3  ? '#c8ff00' :
     xteAbs < 10 ? '#f59e0b' : '#ef4444'
   );
-
-  // Fortschritt 0-100
-  const pct = $derived((navigationStore.progress * 100).toFixed(0));
+  const xtePct = $derived(
+    Math.max(5, Math.min(95, 50 + (navigationStore.xte / 30) * 45))
+  );
+  const pct = $derived(Math.round(navigationStore.progress * 100));
 </script>
 
 {#if navigationStore.active}
-<div class="nav-hud">
-  <!-- Kompass-Ring + Pfeil -->
-  <div class="nav-compass">
-    <div class="nav-compass-ring">
-      <!-- Himmelsrichtungen -->
-      <span class="nav-dir nav-dir-n">N</span>
-      <span class="nav-dir nav-dir-e">E</span>
-      <span class="nav-dir nav-dir-s">S</span>
-      <span class="nav-dir nav-dir-w">W</span>
-      <!-- Pfeil -->
-      <div class="nav-arrow-wrap" style={arrowStyle}>
-        <div class="nav-arrow">▲</div>
-      </div>
-    </div>
+<div
+  class="nav-hud"
+  style="top:{topPx}px"
+  role="status"
+  aria-label="Navigation HUD"
+  aria-live="polite"
+>
+  <!-- Scanline overlay -->
+  <div class="nav-scanlines" aria-hidden="true"></div>
+
+  <!-- Corner brackets (Fallout terminal aesthetic) -->
+  <span class="nav-corner tl" aria-hidden="true">┌</span>
+  <span class="nav-corner tr" aria-hidden="true">┐</span>
+  <span class="nav-corner bl" aria-hidden="true">└</span>
+  <span class="nav-corner br" aria-hidden="true">┘</span>
+
+  <!-- Turn direction indicator -->
+  <div class="nav-turn" data-dir={navigationStore.turnIndicator}>
+    <span class="nav-turn-icon">{turnIcon}</span>
+    <span class="nav-turn-lbl">{turnLabel}</span>
   </div>
 
-  <!-- Distanz + Label -->
-  <div class="nav-info">
-    <div class="nav-dist">{navigationStore.distFormatted}</div>
-    <div class="nav-label">{navigationStore.nextLabel || 'Nächster Wegpunkt'}</div>
+  <div class="nav-divider" aria-hidden="true"></div>
 
-    <!-- XTE-Balken (Cross-Track-Error) -->
-    <div class="nav-xte-wrap" title="Spurabweichung: {navigationStore.xteFormatted}">
-      <span class="nav-xte-side">L</span>
-      <div class="nav-xte-bar">
-        <div class="nav-xte-mid"></div>
-        <div
-          class="nav-xte-dot"
-          style="left:{xtePct.toFixed(1)}%;background:{xteColor}"
-        ></div>
-      </div>
-      <span class="nav-xte-side">R</span>
+  <!-- Distance to next waypoint -->
+  <div class="nav-dist-block">
+    <span class="nav-dist-val">{navigationStore.distFormatted}</span>
+    <span class="nav-dist-lbl">TO&nbsp;NEXT</span>
+  </div>
+
+  <div class="nav-divider" aria-hidden="true"></div>
+
+  <!-- Cross-Track Error bar -->
+  <div class="nav-xte-block" title="Spurabweichung: {navigationStore.xteFormatted}">
+    <div class="nav-xte-bar">
+      <div class="nav-xte-center" aria-hidden="true"></div>
+      <div
+        class="nav-xte-dot"
+        style="left:{xtePct.toFixed(1)}%;background:{xteColor};box-shadow:0 0 5px {xteColor}88"
+        aria-hidden="true"
+      ></div>
     </div>
-
     {#if xteAbs > 1}
-      <div class="nav-xte-label" style="color:{xteColor}">
-        {xteAbs.toFixed(0)}m {navigationStore.xte > 0 ? 'rechts' : 'links'}
-      </div>
+      <span class="nav-xte-lbl" style="color:{xteColor}">
+        {xteAbs.toFixed(0)}m&nbsp;{navigationStore.xte > 0 ? 'R' : 'L'}
+      </span>
     {:else}
-      <div class="nav-xte-label" style="color:var(--ac)">Auf Kurs</div>
+      <span class="nav-xte-lbl" style="color:#c8ff00">ON&nbsp;TRACK</span>
     {/if}
-
-    <!-- Fortschrittsbalken -->
-    <div class="nav-progress-bar">
-      <div class="nav-progress-fill" style="width:{pct}%"></div>
-    </div>
-    <div class="nav-progress-label">
-      {pct}% · {navigationStore.coveredFormatted ?? ''} / {navigationStore.totalFormatted ?? ''}
-    </div>
   </div>
 
-  <!-- Stop-Button -->
-  <button class="nav-stop" onclick={() => navigationStore.stop()} aria-label="Navigation beenden">
-    ✕
-  </button>
+  <div class="nav-divider" aria-hidden="true"></div>
+
+  <!-- Track progress -->
+  <div class="nav-prog-block">
+    <div
+      class="nav-prog-bar"
+      role="progressbar"
+      aria-valuenow={pct}
+      aria-valuemin={0}
+      aria-valuemax={100}
+    >
+      <div class="nav-prog-fill" style="width:{pct}%"></div>
+    </div>
+    <span class="nav-prog-lbl">{pct}%</span>
+  </div>
+
+  <!-- Stop button -->
+  <button
+    class="nav-stop"
+    onclick={() => navigationStore.stop()}
+    aria-label="Navigation beenden"
+    title="Navigation beenden"
+  >✕</button>
 </div>
 {/if}
 
 <style>
-  .nav-hud {
-    position: fixed;
-    top: 4.5rem;
-    left: 0.75rem;
-    z-index: 240;
-    background: rgba(11,14,20,0.92);
-    border: 1px solid var(--bd2);
-    border-radius: 1rem;
-    padding: 0.6rem 0.75rem 0.55rem;
-    width: 160px;
-    backdrop-filter: blur(10px);
-    box-shadow: 0 4px 16px rgba(0,0,0,0.5);
-    display: flex;
-    flex-direction: column;
-    gap: 0.4rem;
-    align-items: center;
-  }
+/* ── Container ──────────────────────────────────────────────────────────── */
+.nav-hud {
+  position: fixed;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 240;
+  width: min(480px, calc(100vw - 12px));
 
-  /* ── Kompass ─────────────────────────────────────────────────────── */
-  .nav-compass {
-    width: 64px;
-    height: 64px;
-    flex-shrink: 0;
-  }
-  .nav-compass-ring {
-    width: 100%;
-    height: 100%;
-    border: 2px solid var(--bd2);
-    border-radius: 50%;
-    position: relative;
-    background: var(--s2);
-  }
-  .nav-dir {
-    position: absolute;
-    font-family: var(--fh);
-    font-size: 9px;
-    font-weight: 800;
-    color: var(--td);
-    line-height: 1;
-  }
-  .nav-dir-n { top: 2px;  left: 50%; transform: translateX(-50%); color: var(--ac); }
-  .nav-dir-s { bottom: 2px; left: 50%; transform: translateX(-50%); }
-  .nav-dir-e { right: 3px; top: 50%; transform: translateY(-50%); }
-  .nav-dir-w { left: 3px;  top: 50%; transform: translateY(-50%); }
+  display: flex;
+  align-items: center;
+  padding: 7px 10px;
 
-  .nav-arrow-wrap {
-    position: absolute;
-    inset: 0;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    transform-origin: center;
-  }
-  .nav-arrow {
-    font-size: 1.5rem;
-    color: var(--ac);
-    line-height: 1;
-    margin-top: -4px;
-    filter: drop-shadow(0 0 4px rgba(200,255,0,0.6));
-  }
+  background: rgba(3, 7, 3, 0.95);
+  border: 1px solid rgba(200, 255, 0, 0.35);
+  border-radius: 6px;
+  overflow: visible;
 
-  /* ── Info ────────────────────────────────────────────────────────── */
-  .nav-info {
-    width: 100%;
-    text-align: center;
-  }
-  .nav-dist {
-    font-family: var(--fh);
-    font-size: 1.4rem;
-    font-weight: 900;
-    color: var(--ac);
-    line-height: 1;
-  }
-  .nav-label {
-    font-family: var(--fh);
-    font-size: 9px;
-    color: var(--td);
-    font-weight: 600;
-    letter-spacing: 0.3px;
-    margin-bottom: 0.35rem;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-  }
+  box-shadow:
+    0 0 0 1px rgba(200, 255, 0, 0.07),
+    0 0 18px rgba(200, 255, 0, 0.12),
+    0 6px 28px rgba(0, 0, 0, 0.75);
 
-  /* ── XTE-Balken ──────────────────────────────────────────────────── */
-  .nav-xte-wrap {
-    display: flex;
-    align-items: center;
-    gap: 4px;
-    width: 100%;
-    margin-bottom: 1px;
-  }
-  .nav-xte-side {
-    font-family: var(--fh);
-    font-size: 8px;
-    font-weight: 700;
-    color: var(--td);
-    flex-shrink: 0;
-  }
-  .nav-xte-bar {
-    flex: 1;
-    height: 6px;
-    background: var(--s3);
-    border-radius: 3px;
-    position: relative;
-    border: 1px solid var(--bd2);
-  }
-  .nav-xte-mid {
-    position: absolute;
-    left: 50%;
-    top: 0; bottom: 0;
-    width: 1px;
-    background: var(--bd2);
-  }
-  .nav-xte-dot {
-    position: absolute;
-    top: 50%;
-    width: 8px; height: 8px;
-    border-radius: 50%;
-    transform: translate(-50%, -50%);
-    transition: left 0.4s ease, background 0.3s;
-    box-shadow: 0 0 4px currentColor;
-  }
-  .nav-xte-label {
-    font-family: var(--fh);
-    font-size: 9px;
-    font-weight: 700;
-    text-align: center;
-    margin-bottom: 0.3rem;
-  }
+  transition: top 0.4s cubic-bezier(0.16, 1, 0.3, 1);
+  animation: nav-in 0.32s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
 
-  /* ── Fortschritt ─────────────────────────────────────────────────── */
-  .nav-progress-bar {
-    height: 4px;
-    background: var(--s3);
-    border-radius: 2px;
-    width: 100%;
-    overflow: hidden;
-    margin-bottom: 2px;
-  }
-  .nav-progress-fill {
-    height: 100%;
-    background: var(--ac);
-    border-radius: 2px;
-    transition: width 0.6s ease;
-  }
-  .nav-progress-label {
-    font-family: var(--fh);
-    font-size: 8px;
-    color: var(--td);
-    text-align: center;
-  }
+@keyframes nav-in {
+  from { opacity: 0; transform: translateX(-50%) translateY(-14px); }
+  to   { opacity: 1; transform: translateX(-50%) translateY(0); }
+}
 
-  /* ── Stop ────────────────────────────────────────────────────────── */
-  .nav-stop {
-    position: absolute;
-    top: -6px;
-    right: -6px;
-    width: 20px;
-    height: 20px;
-    border-radius: 50%;
-    background: var(--s3);
-    border: 1px solid var(--bd2);
-    color: var(--td);
-    font-size: 0.65rem;
-    cursor: pointer;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-  }
-  .nav-stop:hover { color: #ef4444; border-color: rgba(239,68,68,0.5); }
+/* ── Scanlines ──────────────────────────────────────────────────────────── */
+.nav-scanlines {
+  position: absolute;
+  inset: 0;
+  background: repeating-linear-gradient(
+    0deg,
+    transparent 0px, transparent 3px,
+    rgba(0, 0, 0, 0.10) 3px, rgba(0, 0, 0, 0.10) 4px
+  );
+  pointer-events: none;
+  border-radius: inherit;
+}
+
+/* ── Corner brackets ────────────────────────────────────────────────────── */
+.nav-corner {
+  position: absolute;
+  font-family: 'Courier New', monospace;
+  font-size: 9px;
+  color: rgba(200, 255, 0, 0.3);
+  line-height: 1;
+  pointer-events: none;
+  z-index: 2;
+}
+.tl { top: -1px;    left: 1px;  }
+.tr { top: -1px;    right: 1px; }
+.bl { bottom: -1px; left: 1px;  }
+.br { bottom: -1px; right: 1px; }
+
+/* ── Divider ────────────────────────────────────────────────────────────── */
+.nav-divider {
+  width: 1px;
+  height: 28px;
+  background: rgba(200, 255, 0, 0.15);
+  flex-shrink: 0;
+  margin: 0 8px;
+}
+
+/* ── Turn indicator ─────────────────────────────────────────────────────── */
+.nav-turn {
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  min-width: 40px;
+}
+
+.nav-turn-icon {
+  font-size: 1.45rem;
+  line-height: 1;
+  color: #c8ff00;
+  text-shadow: 0 0 10px rgba(200, 255, 0, 0.65);
+}
+
+.nav-turn[data-dir="left"]  .nav-turn-icon,
+.nav-turn[data-dir="right"] .nav-turn-icon {
+  animation: turn-pulse 1.1s ease infinite;
+}
+
+@keyframes turn-pulse {
+  0%, 100% { text-shadow: 0 0 10px rgba(200,255,0,0.65); }
+  50%       { text-shadow: 0 0 22px rgba(200,255,0,1), 0 0 40px rgba(200,255,0,0.4); }
+}
+
+.nav-turn-lbl {
+  font-family: 'Barlow Condensed', sans-serif;
+  font-size: 7px;
+  font-weight: 800;
+  letter-spacing: 1.2px;
+  color: rgba(200, 255, 0, 0.5);
+  text-transform: uppercase;
+}
+
+/* ── Distance block ─────────────────────────────────────────────────────── */
+.nav-dist-block {
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+.nav-dist-val {
+  font-family: 'Barlow Condensed', sans-serif;
+  font-size: 1.35rem;
+  font-weight: 900;
+  color: #c8ff00;
+  line-height: 1;
+  text-shadow: 0 0 10px rgba(200, 255, 0, 0.5);
+  letter-spacing: 0.02em;
+}
+
+.nav-dist-lbl {
+  font-family: 'Barlow Condensed', sans-serif;
+  font-size: 7px;
+  font-weight: 700;
+  letter-spacing: 1px;
+  color: rgba(200, 255, 0, 0.4);
+  text-transform: uppercase;
+}
+
+/* ── XTE block ──────────────────────────────────────────────────────────── */
+.nav-xte-block {
+  flex: 1;
+  min-width: 60px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+}
+
+.nav-xte-bar {
+  width: 100%;
+  height: 6px;
+  background: rgba(255, 255, 255, 0.06);
+  border-radius: 3px;
+  position: relative;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.nav-xte-center {
+  position: absolute;
+  left: 50%;
+  top: -1px;
+  bottom: -1px;
+  width: 1px;
+  background: rgba(200, 255, 0, 0.25);
+}
+
+.nav-xte-dot {
+  position: absolute;
+  top: 50%;
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  transform: translate(-50%, -50%);
+  transition: left 0.45s ease;
+}
+
+.nav-xte-lbl {
+  font-family: 'Barlow Condensed', sans-serif;
+  font-size: 8px;
+  font-weight: 800;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+}
+
+/* ── Progress block ─────────────────────────────────────────────────────── */
+.nav-prog-block {
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  width: 36px;
+}
+
+.nav-prog-bar {
+  width: 100%;
+  height: 4px;
+  background: rgba(255, 255, 255, 0.06);
+  border-radius: 2px;
+  overflow: hidden;
+}
+
+.nav-prog-fill {
+  height: 100%;
+  background: #c8ff00;
+  border-radius: 2px;
+  transition: width 0.9s ease;
+  box-shadow: 0 0 6px rgba(200, 255, 0, 0.45);
+}
+
+.nav-prog-lbl {
+  font-family: 'Barlow Condensed', sans-serif;
+  font-size: 8px;
+  font-weight: 700;
+  color: rgba(200, 255, 0, 0.5);
+  letter-spacing: 0.5px;
+}
+
+/* ── Stop button ────────────────────────────────────────────────────────── */
+.nav-stop {
+  flex-shrink: 0;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: rgba(239, 68, 68, 0.08);
+  border: 1px solid rgba(239, 68, 68, 0.25);
+  color: rgba(239, 68, 68, 0.55);
+  font-size: 9px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-left: 6px;
+  transition: background 0.15s, color 0.15s, border-color 0.15s;
+}
+.nav-stop:hover {
+  background: rgba(239, 68, 68, 0.18);
+  color: #ef4444;
+  border-color: rgba(239, 68, 68, 0.5);
+}
 </style>

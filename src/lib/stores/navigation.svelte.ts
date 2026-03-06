@@ -14,6 +14,8 @@ import { mapStore } from './map.svelte';
 import { app } from './app.svelte';
 import type { GpxPoint, LatLng, NavState } from '$lib/types';
 
+export type TurnIndicator = 'left' | 'right' | 'straight';
+
 // Navigation constants
 const CP_RADIUS_M   = 20; // meters to advance to next checkpoint
 const MAX_SEGMENTS  = 200; // max waypoints for nav (simplified track)
@@ -23,15 +25,17 @@ const MAX_SEGMENTS  = 200; // max waypoints for nav (simplified track)
 // ---------------------------------------------------------------------------
 
 class NavigationStore {
-  active       = $state(false);
-  trackId      = $state<string | null>(null);
-  cpIdx        = $state(0);
-  distToNext   = $state(0);       // meters
-  xte          = $state(0);       // cross-track error meters (+ = right, - = left)
-  bearingToNext = $state(0);      // degrees 0-360
-  nextLabel    = $state('');
-  totalDist    = $state(0);       // total track distance m
-  coveredDist  = $state(0);       // covered so far m
+  active        = $state(false);
+  trackId       = $state<string | null>(null);
+  cpIdx         = $state(0);
+  distToNext    = $state(0);       // meters
+  xte           = $state(0);       // cross-track error meters (+ = right, - = left)
+  bearingToNext = $state(0);       // degrees 0-360
+  nextLabel     = $state('');
+  totalDist     = $state(0);       // total track distance m
+  coveredDist   = $state(0);       // covered so far m
+  turnDelta     = $state(0);       // bearing(50m ahead) - bearing(20m ahead), normalized -180..180
+  closestSegIdx = $state(0);       // index of closest segment on track
 
   // Derived
   distFormatted    = $derived(formatDist(this.distToNext));
@@ -44,6 +48,11 @@ class NavigationStore {
   );
   progress = $derived(
     this.totalDist > 0 ? Math.min(1, this.coveredDist / this.totalDist) : 0
+  );
+  // Turn direction: compare bearing 20m ahead vs 50m ahead
+  turnIndicator = $derived<TurnIndicator>(
+    this.turnDelta < -50 ? 'left' :
+    this.turnDelta > 50  ? 'right' : 'straight'
   );
 
   private _trackPoints: GpxPoint[] = [];
@@ -108,11 +117,23 @@ class NavigationStore {
       }
     }
 
+    this.closestSegIdx = closestSegIdx;
+
     // XTE from closest segment
     if (closestSegIdx < this._trackPoints.length - 1) {
       const segStart: LatLng = { lat: this._trackPoints[closestSegIdx].lat,     lng: this._trackPoints[closestSegIdx].lng };
       const segEnd:   LatLng = { lat: this._trackPoints[closestSegIdx + 1].lat, lng: this._trackPoints[closestSegIdx + 1].lng };
       this.xte = crossTrackError(pos, segStart, segEnd);
+    }
+
+    // Turn detection: bearing 20m ahead vs 50m ahead (spec: delta < -50° = left, > 50° = right)
+    const bear20 = this._bearingAtDistanceM(closestSegIdx, 20);
+    const bear50 = this._bearingAtDistanceM(closestSegIdx, 50);
+    if (bear20 !== null && bear50 !== null) {
+      let delta = bear50 - bear20;
+      if (delta > 180)  delta -= 360;
+      if (delta < -180) delta += 360;
+      this.turnDelta = delta;
     }
 
     // Next checkpoint: advance if within radius
@@ -143,6 +164,34 @@ class NavigationStore {
     if (mapStore.gpsPos) {
       this.processPosition(mapStore.gpsPos.lat, mapStore.gpsPos.lng);
     }
+  }
+
+  /**
+   * Walk along track from fromIdx, find the point distM meters ahead,
+   * and return the bearing from fromIdx's position to that point.
+   */
+  private _bearingAtDistanceM(fromIdx: number, distM: number): number | null {
+    if (fromIdx >= this._trackPoints.length - 1) return null;
+    const origin: LatLng = { lat: this._trackPoints[fromIdx].lat, lng: this._trackPoints[fromIdx].lng };
+    let remaining = distM;
+    let i = fromIdx;
+    while (i < this._trackPoints.length - 1) {
+      const a: LatLng = { lat: this._trackPoints[i].lat,     lng: this._trackPoints[i].lng };
+      const b: LatLng = { lat: this._trackPoints[i + 1].lat, lng: this._trackPoints[i + 1].lng };
+      const segLen = haversine(a, b);
+      if (segLen <= 0) { i++; continue; }
+      if (remaining <= segLen) {
+        const t = remaining / segLen;
+        const targetLat = a.lat + t * (b.lat - a.lat);
+        const targetLng = a.lng + t * (b.lng - a.lng);
+        return bearing(origin, { lat: targetLat, lng: targetLng });
+      }
+      remaining -= segLen;
+      i++;
+    }
+    // End of track reached
+    const last = this._trackPoints[this._trackPoints.length - 1];
+    return bearing(origin, { lat: last.lat, lng: last.lng });
   }
 
   // ---------------------------------------------------------------------------
