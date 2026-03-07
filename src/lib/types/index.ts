@@ -57,11 +57,15 @@ export type FeatureType =
   | 'goal'
   | 'pause';
 
+/** Zustand der Streckenoberfläche */
+export type TrackCondition = 'dry' | 'muddy' | 'icy' | 'unknown';
+
 export interface TrackFeature {
+  id?: string;        // UUID — wird bei addFeature auto-generiert; optional für Migrations-Kompatibilität
   type: FeatureType;
   name: string;
-  diff: number; // 1-5 stars
-  date: number; // unix timestamp ms
+  diff: number;       // 1=Beginner, 2=Mittel, 3=Expert
+  date: number;       // unix timestamp ms
   lat: number;
   lng: number;
 }

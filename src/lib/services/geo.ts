@@ -217,3 +217,34 @@ export function formatSplitMs(ms: number): string {
   const s = (totalS % 60).toFixed(2);
   return m > 0 ? `${m}:${s.padStart(5, '0')}` : `${s}s`;
 }
+
+// --- Snap-to-Track -----------------------------------------------------------
+
+/**
+ * Findet den nächstgelegenen Punkt auf einem GPX-Track zu einer gegebenen Position.
+ * Projiziert `pos` auf jedes Streckensegment (a, b) und gibt den kürzesten Treffer zurück.
+ * Kein externes Paket benötigt — geeignet für Strecken unter ~100 km.
+ */
+export function nearestPointOnTrack(pos: LatLng, points: GpxPoint[]): LatLng {
+  if (points.length === 0) return pos;
+  if (points.length === 1) return { lat: points[0].lat, lng: points[0].lng };
+
+  let nearest: LatLng = { lat: points[0].lat, lng: points[0].lng };
+  let minDist = Infinity;
+
+  for (let i = 0; i < points.length - 1; i++) {
+    const a: LatLng = { lat: points[i].lat,     lng: points[i].lng };
+    const b: LatLng = { lat: points[i + 1].lat, lng: points[i + 1].lng };
+    const dx = b.lng - a.lng;
+    const dy = b.lat - a.lat;
+    const lenSq = dx * dx + dy * dy;
+    // Projektion von pos auf Segment a-b, t ∈ [0,1]
+    const t = lenSq > 0
+      ? Math.max(0, Math.min(1, ((pos.lng - a.lng) * dx + (pos.lat - a.lat) * dy) / lenSq))
+      : 0;
+    const np: LatLng = { lat: a.lat + t * dy, lng: a.lng + t * dx };
+    const d = haversine(pos, np);
+    if (d < minDist) { minDist = d; nearest = np; }
+  }
+  return nearest;
+}

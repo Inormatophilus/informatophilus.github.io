@@ -1,9 +1,8 @@
 <script lang="ts">
   import { tracksStore } from '$lib/stores/tracks.svelte';
-  import { app } from '$lib/stores/app.svelte';
   import { FEAT_ICONS, FEAT_NAMES } from '$lib/types';
   import FeatPosPickerModal from './FeatPosPickerModal.svelte';
-  import type { FeatureType, GmtwTrack } from '$lib/types';
+  import type { FeatureType, GmtwTrack, TrackFeature } from '$lib/types';
 
   interface Props {
     track: GmtwTrack;
@@ -11,10 +10,14 @@
   let { track }: Props = $props();
 
   const features = $derived(tracksStore.getFeatures(track.id));
-  let addingFeature = $state(false);
-  let editingType = $state<FeatureType>('drop');
+  let addingFeature  = $state(false);
+  let editingFeature = $state<TrackFeature | null>(null);
 
-  const FEAT_TYPES = Object.keys(FEAT_ICONS) as FeatureType[];
+  const DIFF_LABELS: Record<number, { label: string; color: string }> = {
+    1: { label: 'Beginner', color: '#22c55e' },
+    2: { label: 'Mittel',   color: '#f59e0b' },
+    3: { label: 'Expert',   color: '#ef4444' },
+  };
 </script>
 
 <div style="display:flex;flex-direction:column;gap:0.5rem">
@@ -23,17 +26,25 @@
     <button class="btn btn-secondary btn-sm" onclick={() => addingFeature = true}>+ Feature</button>
   </div>
 
-  {#each features as feat, i}
+  {#each features as feat}
     <div class="card card-sm" style="display:flex;align-items:center;gap:0.5rem">
-      <span style="font-size:1.2rem">{FEAT_ICONS[feat.type]}</span>
+      <span style="font-size:1.2rem">{FEAT_ICONS[feat.type as FeatureType] ?? '📍'}</span>
       <div style="flex:1">
-        <div class="text-sm font-head">{feat.name || FEAT_NAMES[feat.type]}</div>
-        <div class="text-xs text-dim">
-          {'★'.repeat(feat.diff)}{'☆'.repeat(5 - feat.diff)} · {feat.lat.toFixed(4)}, {feat.lng.toFixed(4)}
+        <div class="text-sm font-head">{feat.name || FEAT_NAMES[feat.type as FeatureType]}</div>
+        <div class="text-xs text-dim" style="display:flex;align-items:center;gap:0.3rem;flex-wrap:wrap">
+          {#if DIFF_LABELS[feat.diff]}
+            <span style="font-size:0.65rem;padding:1px 5px;border-radius:3px;background:{DIFF_LABELS[feat.diff].color};color:#000;font-weight:700">
+              {DIFF_LABELS[feat.diff].label}
+            </span>
+          {/if}
+          <span>{feat.lat.toFixed(4)}, {feat.lng.toFixed(4)}</span>
         </div>
       </div>
-      <button class="btn-icon" style="width:1.8rem;height:1.8rem;font-size:0.7rem;color:#ef4444"
-        onclick={() => { if (confirm('Feature löschen?')) tracksStore.removeFeature(track.id, i); }}>🗑</button>
+      <button class="btn-icon" style="width:1.8rem;height:1.8rem;font-size:0.75rem"
+        onclick={() => editingFeature = feat} title="Bearbeiten">✏️</button>
+      <button class="btn-icon" style="width:1.8rem;height:1.8rem;font-size:0.75rem;color:#ef4444"
+        onclick={() => { if (confirm('Feature löschen?')) tracksStore.removeFeature(track.id, feat.id!); }}
+        title="Löschen">🗑</button>
     </div>
   {/each}
 
@@ -42,15 +53,20 @@
   {/if}
 </div>
 
-{#if addingFeature}
+{#if addingFeature || editingFeature}
   <FeatPosPickerModal
     trackId={track.id}
-    onclose={() => addingFeature = false}
-    onsave={(feat) => {
-      tracksStore.addFeature(track.id, feat);
-      addingFeature = false;
-      // Re-render feature markers on map
-      tracksStore.renderFeatureMarkersOnMap(track);
+    editFeature={editingFeature}
+    onclose={() => { addingFeature = false; editingFeature = null; }}
+    onsave={async (feat) => {
+      if (editingFeature?.id) {
+        await tracksStore.updateFeature(track.id, editingFeature.id, feat);
+      } else {
+        await tracksStore.addFeature(track.id, feat);
+        tracksStore.renderFeatureMarkersOnMap(track);
+      }
+      addingFeature  = false;
+      editingFeature = null;
     }}
   />
 {/if}

@@ -10,15 +10,18 @@ import type {
   CustomMarker,
   TrackFeature,
   TrackEdit,
+  TrackCondition,
   LocsOverride
 } from '$lib/types';
 
-/** Track-Metadaten (Bewertungen, Features, Änderungshistorie) */
+/** Track-Metadaten (Bewertungen, Features, Änderungshistorie, Beschreibung, Zustand) */
 export interface TrackMeta {
   trackId: string;
-  rating?: number; // 0–5 Sterne
+  rating?: number;              // 0–5 Sterne
   features: TrackFeature[];
   edits: TrackEdit[];
+  description?: string;         // Freitext-Beschreibung, max 400 Zeichen
+  condition?: TrackCondition;   // Aktueller Streckenzustand
 }
 
 /** GMTW Datenbank — relationale IndexedDB via Dexie.js */

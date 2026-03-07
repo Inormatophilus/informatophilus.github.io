@@ -12,6 +12,8 @@ import { haversine, crossTrackError, bearing, formatDist } from '$lib/services/g
 import { tracksStore } from './tracks.svelte';
 import { mapStore } from './map.svelte';
 import { app } from './app.svelte';
+import { a11yStore } from './a11y.svelte';
+import { FEAT_NAMES, type FeatureType } from '$lib/types';
 import type { GpxPoint, LatLng, NavState } from '$lib/types';
 
 export type TurnIndicator = 'left' | 'right' | 'straight';
@@ -36,6 +38,7 @@ class NavigationStore {
   coveredDist   = $state(0);       // covered so far m
   turnDelta     = $state(0);       // bearing(50m ahead) - bearing(20m ahead), normalized -180..180
   closestSegIdx = $state(0);       // index of closest segment on track
+  travelHeading = $state<number | null>(null); // bearing from movement (prev→curr GPS pos)
 
   // Derived
   distFormatted    = $derived(formatDist(this.distToNext));
@@ -49,14 +52,21 @@ class NavigationStore {
   progress = $derived(
     this.totalDist > 0 ? Math.min(1, this.coveredDist / this.totalDist) : 0
   );
-  // Turn direction: compare bearing 20m ahead vs 50m ahead
-  turnIndicator = $derived<TurnIndicator>(
-    this.turnDelta < -50 ? 'left' :
-    this.turnDelta > 50  ? 'right' : 'straight'
-  );
+  // Turn direction: relative to travel heading when available, else track curvature fallback
+  turnIndicator = $derived.by<TurnIndicator>(() => {
+    if (this.travelHeading !== null) {
+      const rel   = ((this.bearingToNext - this.travelHeading) + 360) % 360;
+      const delta = rel > 180 ? rel - 360 : rel; // normalize to -180..+180
+      return delta < -50 ? 'left' : delta > 50 ? 'right' : 'straight';
+    }
+    // Fallback: track curvature (no travel heading yet)
+    return this.turnDelta < -50 ? 'left' : this.turnDelta > 50 ? 'right' : 'straight';
+  });
 
   private _trackPoints: GpxPoint[] = [];
   private _gpsSub: (() => void) | null = null;
+  private _prevPos: LatLng | null = null;
+  private _lastWarnedFeatId: string | null = null; // verhindert Mehrfach-Ansagen
 
   // ---------------------------------------------------------------------------
   // Start / Stop
@@ -79,10 +89,13 @@ class NavigationStore {
   }
 
   stop(): void {
-    this.active  = false;
-    this.trackId = null;
-    this._trackPoints = [];
-    this.cpIdx   = 0;
+    this.active              = false;
+    this.trackId             = null;
+    this._trackPoints        = [];
+    this.cpIdx               = 0;
+    this.travelHeading       = null;
+    this._prevPos            = null;
+    this._lastWarnedFeatId   = null;
     app.toast('Navigation beendet', 'info');
   }
 
@@ -98,6 +111,17 @@ class NavigationStore {
   processPosition(lat: number, lng: number): void {
     if (!this.active || this._trackPoints.length < 2) return;
     const pos: LatLng = { lat, lng };
+
+    // Update travel heading from movement (> 3m threshold to avoid GPS noise)
+    if (this._prevPos) {
+      const moved = haversine(this._prevPos, pos);
+      if (moved > 3) {
+        this.travelHeading = bearing(this._prevPos, pos);
+        this._prevPos = pos;
+      }
+    } else {
+      this._prevPos = pos;
+    }
 
     // Find closest segment
     let closestSegIdx = this.cpIdx;
@@ -153,10 +177,34 @@ class NavigationStore {
     // Label
     this.nextLabel = `WP ${this.cpIdx + 1}/${this._trackPoints.length}`;
 
+    // Feature proximity TTS warning
+    this._checkFeatureApproach(lat, lng);
+
     // Check finish
     if (this.cpIdx >= this._trackPoints.length - 2 && distToNext < 10) {
       app.toast('Ziel erreicht!', 'success');
       this.stop();
+    }
+  }
+
+  private _checkFeatureApproach(lat: number, lng: number): void {
+    if (!a11yStore.enabled || !this.trackId) return;
+    const features = tracksStore.getFeatures(this.trackId);
+    const pos: LatLng = { lat, lng };
+    for (const f of features) {
+      if (!f.id) continue;
+      const d = haversine(pos, { lat: f.lat, lng: f.lng });
+      if (d <= 40 && this._lastWarnedFeatId !== f.id) {
+        this._lastWarnedFeatId = f.id;
+        const diffWord = f.diff >= 3 ? 'Schwerer' : f.diff === 2 ? 'Mittlerer' : 'Leichter';
+        const name = FEAT_NAMES[f.type as FeatureType] ?? f.type;
+        a11yStore.speak(`Achtung! ${diffWord} ${name} in ${Math.round(d / 5) * 5} Metern`);
+        return;
+      }
+    }
+    // Reset warn lock once we're >80m from all features
+    if (features.every(f => haversine(pos, { lat: f.lat, lng: f.lng }) > 80)) {
+      this._lastWarnedFeatId = null;
     }
   }
 

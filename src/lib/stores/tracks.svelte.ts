@@ -12,7 +12,7 @@ import { app } from './app.svelte';
 import { projectsStore } from './projects.svelte';
 import { mapStore } from './map.svelte';
 import { FEAT_ICONS } from '$lib/types';
-import type { GmtwTrack, TrackCat, TrackFeature, TrackEdit, GpxPoint } from '$lib/types';
+import type { GmtwTrack, TrackCat, TrackCondition, TrackFeature, TrackEdit, GpxPoint } from '$lib/types';
 
 // ---------------------------------------------------------------------------
 // GitHub Repo — Auto-Download Konfiguration
@@ -89,6 +89,20 @@ class TracksStore {
       const metas = await db.trackMeta.toArray();
       const cache: Record<string, TrackMeta> = {};
       for (const m of metas) cache[m.trackId] = m;
+
+      // Migrate features without id (introduced in v2 — run once, fire-and-forget)
+      for (const meta of Object.values(cache)) {
+        let changed = false;
+        meta.features = meta.features.map(f => {
+          if (!f.id) {
+            changed = true;
+            return { ...f, id: `feat_${Date.now()}_${Math.random().toString(36).slice(2, 6)}` };
+          }
+          return f;
+        });
+        if (changed) db.trackMeta.put(meta);
+      }
+
       this._metaCache = cache;
     } finally {
       this.loading = false;
@@ -317,14 +331,31 @@ class TracksStore {
 
   async addFeature(trackId: string, feature: TrackFeature): Promise<void> {
     const meta = await this._ensureMeta(trackId);
-    meta.features = [...meta.features, feature];
+    // Auto-assign id if missing
+    const withId: TrackFeature = feature.id
+      ? feature
+      : { ...feature, id: `feat_${Date.now()}_${Math.random().toString(36).slice(2, 6)}` };
+    meta.features = [...meta.features, withId];
     await db.trackMeta.put(meta);
     this._metaCache = { ...this._metaCache, [trackId]: meta };
   }
 
-  async removeFeature(trackId: string, idx: number): Promise<void> {
+  async removeFeature(trackId: string, featureId: string): Promise<void> {
     const meta = await this._ensureMeta(trackId);
-    meta.features = meta.features.filter((_, i) => i !== idx);
+    meta.features = meta.features.filter(f => f.id !== featureId);
+    await db.trackMeta.put(meta);
+    this._metaCache = { ...this._metaCache, [trackId]: meta };
+  }
+
+  async updateFeature(
+    trackId: string,
+    featureId: string,
+    changes: Partial<Omit<TrackFeature, 'id'>>
+  ): Promise<void> {
+    const meta = await this._ensureMeta(trackId);
+    meta.features = meta.features.map(f =>
+      f.id === featureId ? { ...f, ...changes } : f
+    );
     await db.trackMeta.put(meta);
     this._metaCache = { ...this._metaCache, [trackId]: meta };
   }
@@ -357,6 +388,46 @@ class TracksStore {
     meta.edits = [edit, ...meta.edits].slice(0, 50);
     await db.trackMeta.put(meta);
     this._metaCache = { ...this._metaCache, [trackId]: meta };
+  }
+
+  // ---------------------------------------------------------------------------
+  // Track Meta: Description
+  // ---------------------------------------------------------------------------
+
+  getDescription(trackId: string): string {
+    return this._metaCache[trackId]?.description ?? '';
+  }
+
+  async setDescription(trackId: string, desc: string): Promise<void> {
+    const meta = await this._ensureMeta(trackId);
+    const old  = meta.description ?? '';
+    const trimmed = desc.slice(0, 400);
+    if (trimmed === old) return; // unchanged — skip write
+    meta.description = trimmed;
+    await db.trackMeta.put(meta);
+    this._metaCache = { ...this._metaCache, [trackId]: meta };
+    const edit: TrackEdit = { type: 'description', newVal: trimmed, oldVal: old, name: 'Beschreibung', date: Date.now() };
+    await this.addEdit(trackId, edit);
+  }
+
+  // ---------------------------------------------------------------------------
+  // Track Meta: Condition (Streckenzustand)
+  // ---------------------------------------------------------------------------
+
+  getCondition(trackId: string): TrackCondition {
+    return this._metaCache[trackId]?.condition ?? 'unknown';
+  }
+
+  async setCondition(trackId: string, cond: TrackCondition): Promise<void> {
+    const meta = await this._ensureMeta(trackId);
+    const old  = meta.condition ?? 'unknown';
+    if (cond === old) return;
+    meta.condition = cond;
+    await db.trackMeta.put(meta);
+    this._metaCache = { ...this._metaCache, [trackId]: meta };
+    const condLabels: Record<TrackCondition, string> = { dry: '🌞 Trocken', muddy: '💧 Schlammig', icy: '🧊 Eisig', unknown: '❓ Unbekannt' };
+    const edit: TrackEdit = { type: 'condition', newVal: condLabels[cond], oldVal: condLabels[old], name: 'Zustand', date: Date.now() };
+    await this.addEdit(trackId, edit);
   }
 
   // ---------------------------------------------------------------------------

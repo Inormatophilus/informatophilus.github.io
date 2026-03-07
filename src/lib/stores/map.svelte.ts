@@ -7,6 +7,7 @@
 import { saveMapView, loadMapView, saveHomeRegion, loadHomeRegion, LS_KEYS, lsSet } from '$lib/services/storage';
 import { enqueueTilePrefetch } from '$lib/services/sw-messenger';
 import { DEFAULT_CENTER, DEFAULT_ZOOM } from '$lib/data/locs';
+import { bearing, haversine } from '$lib/services/geo';
 import type { LatLng } from '$lib/types';
 
 // Re-export for use inside class methods that can't import at top level
@@ -41,15 +42,17 @@ class MapStore {
   filter  = $state<MapFilter>('all');
 
   // GPS State
-  gpsActive    = $state(false);
-  gpsPos       = $state<LatLng | null>(null);
-  gpsAccuracy  = $state(0);
-  gpsHeading   = $state<number | null>(null);
-  gpsError     = $state<string | null>(null);
-  gpsFix       = $state(false); // first fix received
+  gpsActive          = $state(false);
+  gpsPos             = $state<LatLng | null>(null);
+  gpsAccuracy        = $state(0);
+  gpsHeading         = $state<number | null>(null);
+  gpsMovementHeading = $state<number | null>(null); // bearing from prev→curr position
+  gpsError           = $state<string | null>(null);
+  gpsFix             = $state(false); // first fix received
 
-  private _watchId: number | null = null;
-  private _wakeLock: WakeLockSentinel | null = null;
+  private _watchId:   number | null = null;
+  private _wakeLock:  WakeLockSentinel | null = null;
+  private _prevGpsPos: LatLng | null = null;
 
   // ---------------------------------------------------------------------------
   // Map Initialization
@@ -170,8 +173,10 @@ class MapStore {
       navigator.geolocation.clearWatch(this._watchId);
       this._watchId = null;
     }
-    this.gpsActive = false;
-    this.gpsPos    = null;
+    this.gpsActive          = false;
+    this.gpsPos             = null;
+    this.gpsMovementHeading = null;
+    this._prevGpsPos        = null;
     this._releaseWakeLock();
   }
 
@@ -182,7 +187,20 @@ class MapStore {
 
   private _onGpsSuccess(pos: GeolocationPosition): void {
     const { latitude, longitude, accuracy, heading } = pos.coords;
-    this.gpsPos      = { lat: latitude, lng: longitude };
+    const curr: LatLng = { lat: latitude, lng: longitude };
+
+    // Calculate movement heading from position delta (> 3m movement threshold)
+    if (this._prevGpsPos) {
+      const moved = haversine(this._prevGpsPos, curr);
+      if (moved > 3) {
+        this.gpsMovementHeading = bearing(this._prevGpsPos, curr);
+        this._prevGpsPos = curr;
+      }
+    } else {
+      this._prevGpsPos = curr;
+    }
+
+    this.gpsPos      = curr;
     this.gpsAccuracy = accuracy;
     this.gpsHeading  = heading;
     this.gpsError    = null;
