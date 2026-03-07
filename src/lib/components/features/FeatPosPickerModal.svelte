@@ -15,16 +15,17 @@
   }
   let { trackId, editFeature = null, onclose, onsave }: Props = $props();
 
-  let miniMap: HTMLDivElement;
-  let lMap:          import('leaflet').Map | null = null;
+  // Reactive state for UI
   let crosshairLat = $state(editFeature?.lat ?? mapStore.gpsPos?.lat ?? 51.4192);
   let crosshairLng = $state(editFeature?.lng ?? mapStore.gpsPos?.lng ?? 7.4855);
+  let selType      = $state<FeatureType>((editFeature?.type ?? 'drop') as FeatureType);
+  let featName     = $state(editFeature?.name ?? '');
+  let featDiff     = $state<1 | 2 | 3>(Math.max(1, Math.min(3, editFeature?.diff ?? 2)) as 1 | 2 | 3);
+  let snapEnabled  = $state(false);
 
-  let selType     = $state<FeatureType>((editFeature?.type ?? 'drop') as FeatureType);
-  let featName    = $state(editFeature?.name ?? '');
-  let featDiff    = $state<1 | 2 | 3>(Math.max(1, Math.min(3, editFeature?.diff ?? 2)) as 1 | 2 | 3);
-  let snapEnabled = $state(false);
-
+  // Non-reactive Leaflet objects (MUST NOT be $state — Svelte proxy breaks Leaflet)
+  let _marker:   import('leaflet').Marker | null = null;
+  let _L:        typeof import('leaflet') | null = null;
   let _trackPts: GpxPoint[] = [];
 
   const FEAT_TYPES = Object.keys(FEAT_ICONS) as FeatureType[];
@@ -35,42 +36,72 @@
     { v: 3, l: 'Expert',   c: '#ef4444' },
   ];
 
-  onMount(async () => {
-    _trackPts = tracksStore.getPointsForTrack(trackId);
-
-    const L = await import('leaflet');
-    lMap = L.map(miniMap, {
-      center:      [crosshairLat, crosshairLng],
-      zoom:        mapStore.map?.getZoom() ?? 16,
-      zoomControl: true,
+  function _createIcon(type: FeatureType) {
+    if (!_L) return null;
+    return _L.divIcon({
+      className: '',
+      html: `<div class="feat-drag-pin" style="font-size:2rem;line-height:1;filter:drop-shadow(0 2px 6px rgba(0,0,0,0.9));user-select:none">${FEAT_ICONS[type]}</div>`,
+      iconSize:   [40, 40],
+      iconAnchor: [20, 40],
     });
-    L.tileLayer('https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png', { maxZoom: 18 }).addTo(lMap);
+  }
 
-    lMap.on('moveend', () => {
-      const c = lMap!.getCenter();
+  // Update marker icon live when feature type changes
+  $effect(() => {
+    const icon = _createIcon(selType);
+    if (icon) _marker?.setIcon(icon);
+  });
+
+  onMount(async () => {
+    if (!mapStore.map) { app.toast('Karte nicht bereit', 'error'); return; }
+
+    _trackPts = tracksStore.getPointsForTrack(trackId);
+    _L = await import('leaflet');
+
+    const initialIcon = _createIcon(selType)!;
+
+    _marker = _L.marker([crosshairLat, crosshairLng], {
+      draggable:    true,
+      icon:         initialIcon,
+      zIndexOffset: 900,
+    }).addTo(mapStore.map);
+
+    _marker.on('dragend', () => {
+      const pos = _marker!.getLatLng();
       if (snapEnabled && _trackPts.length >= 2) {
-        const snp    = nearestPointOnTrack({ lat: c.lat, lng: c.lng }, _trackPts);
+        const snp    = nearestPointOnTrack({ lat: pos.lat, lng: pos.lng }, _trackPts);
         crosshairLat = snp.lat;
         crosshairLng = snp.lng;
+        _marker!.setLatLng([snp.lat, snp.lng]);
       } else {
-        crosshairLat = c.lat;
-        crosshairLng = c.lng;
+        crosshairLat = pos.lat;
+        crosshairLng = pos.lng;
       }
     });
 
-    // When editing: fly to the existing feature position
-    if (editFeature) {
-      lMap.setView([editFeature.lat, editFeature.lng], 16);
+    // Zoom map to track, or to edit feature position
+    const track = tracksStore.getTrack(trackId);
+    if (track?.bounds) {
+      mapStore.fitBounds([
+        [track.bounds.south, track.bounds.west],
+        [track.bounds.north, track.bounds.east],
+      ]);
+    } else if (editFeature) {
+      mapStore.map.setView([editFeature.lat, editFeature.lng], 17);
     }
   });
 
-  onDestroy(() => { lMap?.remove(); });
+  onDestroy(() => {
+    if (_marker && mapStore.map) mapStore.map.removeLayer(_marker);
+    _marker = null;
+  });
 
   function setToGpsPos() {
     if (!mapStore.gpsPos) { app.toast('Kein GPS-Fix', 'warn'); return; }
     crosshairLat = mapStore.gpsPos.lat;
     crosshairLng = mapStore.gpsPos.lng;
-    lMap?.setView([crosshairLat, crosshairLng], lMap.getZoom());
+    _marker?.setLatLng([crosshairLat, crosshairLng]);
+    mapStore.map?.panTo([crosshairLat, crosshairLng]);
   }
 
   function save() {
@@ -87,106 +118,110 @@
   }
 </script>
 
-<!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
-<div class="fpp-overlay" role="dialog">
-  <!-- Mini map -->
-  <div class="fpp-map-wrap">
-    <div bind:this={miniMap} style="width:100%;height:100%"></div>
+<!-- Bottom-sheet — NO fullscreen overlay, map stays interactive -->
+<div class="fpp-sheet" role="dialog">
 
-    <!-- Crosshair icon -->
-    <div class="fpp-crosshair">
-      <div style="font-size:2rem;filter:drop-shadow(0 0 4px #000)">{FEAT_ICONS[selType]}</div>
-    </div>
+  <!-- Drag hint + live coordinates -->
+  <div class="fpp-hint">
+    <span class="fpp-hint-icon">{FEAT_ICONS[selType]}</span>
+    <span class="fpp-hint-text">Marker auf der Karte verschieben</span>
+    <span class="fpp-coords">{crosshairLat.toFixed(5)}, {crosshairLng.toFixed(5)}</span>
+  </div>
 
-    <!-- Coords label -->
-    <div class="fpp-coords">
-      {crosshairLat.toFixed(5)}, {crosshairLng.toFixed(5)}
-    </div>
-
-    <!-- GPS + Snap overlay buttons -->
-    <div class="fpp-tools">
-      <button class="btn btn-secondary btn-sm" onclick={setToGpsPos}
-        disabled={!mapStore.gpsPos} title="GPS-Position setzen">📍 GPS</button>
+  <!-- Feature type chips -->
+  <div class="fpp-scroll-row">
+    {#each FEAT_TYPES as type}
       <button
-        class="btn btn-sm {snapEnabled ? 'btn-primary' : 'btn-secondary'}"
-        onclick={() => snapEnabled = !snapEnabled}
-        title="Auf Track einrasten"
-      >🧲 Snap {snapEnabled ? 'AN' : 'AUS'}</button>
+        class="chip {selType === type ? 'active' : ''}"
+        onclick={() => selType = type}
+        style="flex-shrink:0"
+        title={FEAT_NAMES[type]}
+      >{FEAT_ICONS[type]}</button>
+    {/each}
+  </div>
+
+  <!-- Name input -->
+  <div class="form-row">
+    <label class="form-label" for="fpp-name">Name</label>
+    <input
+      id="fpp-name" class="input" type="text"
+      bind:value={featName}
+      placeholder={FEAT_NAMES[selType]}
+    />
+  </div>
+
+  <!-- Difficulty chips -->
+  <div class="form-row">
+    <label class="form-label">Schwierigkeit</label>
+    <div style="display:flex;gap:0.4rem">
+      {#each DIFF_LEVELS as d}
+        <button
+          class="chip {featDiff === d.v ? 'active' : ''}"
+          style={featDiff === d.v
+            ? `background:${d.c};color:#000;border-color:${d.c};font-weight:700`
+            : ''}
+          onclick={() => featDiff = d.v}
+        >{d.l}</button>
+      {/each}
     </div>
   </div>
 
-  <!-- Controls panel -->
-  <div class="fpp-controls">
-    <!-- Type chips -->
-    <div style="display:flex;gap:0.3rem;overflow-x:auto;scrollbar-width:none;padding-bottom:0.1rem">
-      {#each FEAT_TYPES as type}
-        <button
-          class="chip {selType === type ? 'active' : ''}"
-          onclick={() => selType = type}
-          style="flex-shrink:0"
-          title={FEAT_NAMES[type]}
-        >{FEAT_ICONS[type]}</button>
-      {/each}
-    </div>
+  <!-- GPS + Snap row -->
+  <div style="display:flex;gap:0.5rem">
+    <button class="btn btn-secondary btn-sm flex-1"
+      onclick={setToGpsPos}
+      disabled={!mapStore.gpsPos}
+    >📍 GPS</button>
+    <button
+      class="btn btn-sm flex-1 {snapEnabled ? 'btn-primary' : 'btn-secondary'}"
+      onclick={() => snapEnabled = !snapEnabled}
+    >🧲 Snap {snapEnabled ? 'AN' : 'AUS'}</button>
+  </div>
 
-    <div class="form-row">
-      <label class="form-label" for="feat-name">Name</label>
-      <input id="feat-name" class="input" type="text" bind:value={featName}
-        placeholder={FEAT_NAMES[selType]} />
-    </div>
-
-    <div class="form-row">
-      <label class="form-label">Schwierigkeit</label>
-      <div style="display:flex;gap:0.4rem">
-        {#each DIFF_LEVELS as d}
-          <button
-            class="chip {featDiff === d.v ? 'active' : ''}"
-            style={featDiff === d.v
-              ? `background:${d.c};color:#000;border-color:${d.c};font-weight:700`
-              : ''}
-            onclick={() => featDiff = d.v}
-          >{d.l}</button>
-        {/each}
-      </div>
-    </div>
-
-    <div style="display:flex;gap:0.5rem">
-      <button class="btn btn-secondary flex-1" onclick={onclose}>Abbrechen</button>
-      <button class="btn btn-primary flex-1" onclick={save}>
-        {editFeature ? 'Aktualisieren' : 'Feature setzen'}
-      </button>
-    </div>
+  <!-- Cancel / Save -->
+  <div style="display:flex;gap:0.5rem">
+    <button class="btn btn-secondary flex-1" onclick={onclose}>Abbrechen</button>
+    <button class="btn btn-primary flex-1" onclick={save}>
+      {editFeature ? 'Aktualisieren' : 'Feature setzen'}
+    </button>
   </div>
 </div>
 
 <style>
-  .fpp-overlay {
-    position: fixed; inset: 0;
-    background: rgba(0, 0, 0, 0.85);
-    z-index: 450;
-    display: flex; flex-direction: column;
-  }
-  .fpp-map-wrap {
-    flex: 1; position: relative; overflow: hidden;
-  }
-  .fpp-crosshair {
-    position: absolute; inset: 0; pointer-events: none;
-    display: flex; align-items: center; justify-content: center;
-  }
-  .fpp-coords {
-    position: absolute; top: 0.5rem; left: 50%; transform: translateX(-50%);
-    background: rgba(11,14,20,0.85);
-    padding: 0.25rem 0.75rem; border-radius: 1rem;
-    font-size: 0.75rem; color: var(--td);
-    pointer-events: none; white-space: nowrap;
-  }
-  .fpp-tools {
-    position: absolute; top: 0.5rem; right: 0.5rem;
-    display: flex; flex-direction: column; gap: 0.3rem;
-  }
-  .fpp-controls {
+  .fpp-sheet {
+    position: fixed;
+    bottom: 0; left: 0; right: 0;
     background: var(--s1);
-    padding: 0.75rem 1rem;
-    display: flex; flex-direction: column; gap: 0.5rem;
+    border-top: 2px solid var(--bd2);
+    border-radius: 1rem 1rem 0 0;
+    padding: 0.75rem 1rem 1rem;
+    z-index: 450;
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+    max-height: 55vh;
+    overflow-y: auto;
+    box-shadow: 0 -4px 24px rgba(0,0,0,0.4);
   }
+
+  .fpp-hint {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    padding: 0.3rem 0;
+    border-bottom: 1px solid var(--bd2);
+    margin-bottom: 0.1rem;
+  }
+  .fpp-hint-icon { font-size: 1.2rem; flex-shrink: 0; }
+  .fpp-hint-text { flex: 1; font-size: 0.82rem; color: var(--td); }
+  .fpp-coords    { font-size: 0.72rem; color: var(--td); font-family: monospace; flex-shrink: 0; }
+
+  .fpp-scroll-row {
+    display: flex;
+    gap: 0.3rem;
+    overflow-x: auto;
+    scrollbar-width: none;
+    padding-bottom: 0.1rem;
+  }
+  .fpp-scroll-row::-webkit-scrollbar { display: none; }
 </style>

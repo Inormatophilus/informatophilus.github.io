@@ -125,15 +125,15 @@ class TracksStore {
         const def = AUTO_TRACKS[i];
         this.autoDownloadProgress = Math.round((i / AUTO_TRACKS.length) * 100);
 
-        // Skip if already loaded (by name) and not forcing
-        if (!force && this.tracks.some(t => t.name === def.name)) continue;
+        const url = REPO_RAW_BASE + def.file;
+        // Robust dedup: check sourceUrl first (most reliable), fallback to name
+        if (!force && this.tracks.some(t => t.sourceUrl === url || t.name === def.name)) continue;
 
         try {
-          const url  = REPO_RAW_BASE + def.file;
           const resp = await fetch(url);
           if (!resp.ok) continue;
           const gpxStr = await resp.text();
-          await this.loadGpxString(gpxStr, def.name, def.cat, projectId, true /* silent */);
+          await this.loadGpxString(gpxStr, def.name, def.cat, projectId, true /* silent */, url);
           downloaded++;
         } catch {
           // Network error — skip silently
@@ -164,15 +164,17 @@ class TracksStore {
       let newCount = 0;
       const projectId = projectsStore.activeProjectId ?? 'default';
       for (const f of gpxFiles) {
-        if (this.tracks.some(t => t.name === f.name.replace(/\.gpx$/i, ''))) continue;
+        const basename = f.name.replace(/\.gpx$/i, '');
+        // Robust dedup: check sourceUrl first, then name
+        if (this.tracks.some(t => t.sourceUrl === f.download_url || t.name === basename)) continue;
         try {
           const r = await fetch(f.download_url);
           if (!r.ok) continue;
           const gpxStr = await r.text();
-          const name   = f.name.replace(/\.gpx$/i, '');
+          const name   = basename;
           // Detect category from filename
           const cat = _detectCat(f.name);
-          await this.loadGpxString(gpxStr, name, cat, projectId, true);
+          await this.loadGpxString(gpxStr, name, cat, projectId, true, f.download_url);
           newCount++;
         } catch { /* skip */ }
       }
@@ -192,7 +194,8 @@ class TracksStore {
     name: string,
     cat: TrackCat = 'custom',
     projectId?: string,
-    silent = false
+    silent = false,
+    sourceUrl?: string
   ): Promise<GmtwTrack> {
     const parsed = parseGpx(gpxStr);
     const stats  = parsed.stats;
@@ -209,6 +212,7 @@ class TracksStore {
       projectId: projectId ?? projectsStore.activeProjectId ?? 'default',
       createdAt: Date.now(),
       bounds,
+      sourceUrl,
     };
 
     await db.tracks.put(serializeTrack(track));
@@ -235,7 +239,14 @@ class TracksStore {
       const resp = await fetch(finalUrl);
       if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
       const gpxStr = await resp.text();
-      return await this.loadGpxString(gpxStr, name ?? url.split('/').pop()?.replace(/\.gpx$/i,'') ?? 'Track', cat);
+      return await this.loadGpxString(
+        gpxStr,
+        name ?? finalUrl.split('/').pop()?.replace(/\.gpx$/i, '') ?? 'Track',
+        cat,
+        undefined,
+        false,
+        finalUrl
+      );
     } catch (err) {
       app.toast(`GPX-Ladefehler: ${err}`, 'error');
       return null;
