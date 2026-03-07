@@ -176,16 +176,16 @@
   .fabs {
     position: absolute;
     right: 0.6rem;
-    bottom: 5.5rem;
-    z-index: 400;
+    bottom: calc(5.5rem + env(safe-area-inset-bottom, 0px));
+    z-index: var(--z-fab);
     display: flex;
     flex-direction: column;
     gap: 0.45rem;
   }
 
   .fab {
-    width: 42px;
-    height: 42px;
+    width: 44px;
+    height: 44px;
     border-radius: 12px;
     background: var(--s2);
     border: 1px solid var(--bd2);

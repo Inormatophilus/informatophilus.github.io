@@ -318,13 +318,13 @@
 /* ── Stop button ────────────────────────────────────────────────────────── */
 .nav-stop {
   flex-shrink: 0;
-  width: 22px;
-  height: 22px;
+  width: 36px;
+  height: 36px;
   border-radius: 50%;
   background: rgba(239, 68, 68, 0.08);
   border: 1px solid rgba(239, 68, 68, 0.25);
   color: rgba(239, 68, 68, 0.55);
-  font-size: 9px;
+  font-size: 11px;
   cursor: pointer;
   display: flex;
   align-items: center;
@@ -336,5 +336,18 @@
   background: rgba(239, 68, 68, 0.18);
   color: #ef4444;
   border-color: rgba(239, 68, 68, 0.5);
+}
+
+/* ── Mobile (≤480px) ────────────────────────────────────────────────────── */
+@media (max-width: 480px) {
+  .nav-hud {
+    width: calc(100vw - 8px);
+    padding: 5px 8px;
+  }
+  .nav-turn-icon { font-size: 1.2rem; }
+  .nav-dist-val   { font-size: 1.1rem; }
+  .nav-divider    { margin: 0 4px; }
+  .nav-xte-block  { min-width: 44px; }
+  .nav-prog-block { width: 28px; }
 }
 </style>

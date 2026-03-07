@@ -57,7 +57,7 @@
   </div>
 
   <!-- Tab Content -->
-  <div style="flex:1;overflow-y:auto;padding:0 0.75rem 1rem">
+  <div style="flex:1;overflow-y:auto;padding:0 0.75rem calc(1rem + env(safe-area-inset-bottom, 0px))">
     {#if app.settingsTab === 'profile'}
       <ProfileTab />
     {:else if app.settingsTab === 'general'}

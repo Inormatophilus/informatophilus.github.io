@@ -69,7 +69,7 @@
     position: absolute;
     top: 58px;
     left: 0; right: 0;
-    z-index: 390;
+    z-index: var(--z-fab);
     display: flex;
     gap: 6px;
     padding: 6px 12px 8px;
@@ -147,6 +147,6 @@
   .proj-backdrop {
     position: fixed;
     inset: 0;
-    z-index: 389;
+    z-index: calc(var(--z-fab) - 1);
   }
 </style>
