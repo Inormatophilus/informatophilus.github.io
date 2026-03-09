@@ -16,7 +16,7 @@ import { parseGpx, buildGpxString } from './gpx';
 
 // --- Konfiguration -----------------------------------------------------------
 
-export const QR_CHUNK_SIZE = 800;  // Zeichen pro QR-Code — 800 für sichere Scan-Zuverlässigkeit
+export const QR_CHUNK_SIZE = 500;  // Zeichen pro QR-Code — 500 für zuverlässiges Scannen
 export const QR_MAX_PTS = 1000;    // Max. Punkte nach RDP-Vereinfachung
 export const QR_VERSION = 1;       // Protokoll-Version
 
@@ -232,7 +232,7 @@ export function detectPayloadType(decoded: unknown): QrPayloadType {
 
 // --- QR-Code Rendering (qrcode-generator) ------------------------------------
 
-/** Zeichnet QR-Code auf Canvas-Element */
+/** Zeichnet QR-Code auf Canvas-Element mit Quiet Zone für zuverlässiges Scannen */
 export function renderQrCanvas(
   canvas: HTMLCanvasElement,
   data: string,
@@ -243,7 +243,7 @@ export function renderQrCanvas(
   try {
     // qrcode-generator: CJS default interop (Vite handles it)
     const qrFn = (qrcodeGenerator as unknown as { default?: typeof qrcodeGenerator }).default ?? qrcodeGenerator;
-    const qr = qrFn(0, 'M');
+    const qr = qrFn(0, 'L');  // Error-Correction 'L' → weniger dichte Codes, besser scannbar
     qr.addData(data);
     qr.make();
     const modules = qr.getModuleCount();
@@ -251,16 +251,25 @@ export function renderQrCanvas(
     if (!ctx) return;
     canvas.width = size;
     canvas.height = size;
-    const cellSize = size / modules;
+
+    // Quiet Zone: 4 Module Weißraum rundherum (QR-Standard ISO/IEC 18004)
+    const quietZone = 4;
+    const totalModules = modules + quietZone * 2;
+    const cellSize = size / totalModules;
+
+    // Hintergrund komplett weiß (inkl. Quiet Zone)
     ctx.fillStyle = bg;
     ctx.fillRect(0, 0, size, size);
+
+    // QR-Module mit Offset für Quiet Zone
     ctx.fillStyle = fg;
+    const offset = quietZone * cellSize;
     for (let r = 0; r < modules; r++) {
       for (let c = 0; c < modules; c++) {
         if (qr.isDark(r, c)) {
           ctx.fillRect(
-            Math.floor(c * cellSize),
-            Math.floor(r * cellSize),
+            Math.floor(offset + c * cellSize),
+            Math.floor(offset + r * cellSize),
             Math.ceil(cellSize),
             Math.ceil(cellSize)
           );
@@ -287,7 +296,7 @@ export class QRAnimator {
   /** Callback: wird nach jedem Frame-Wechsel aufgerufen */
   onFrame?: (idx: number, total: number) => void;
 
-  constructor(fps = 3, size = 300, fg = '#c8ff00', bg = '#0b0e14') {
+  constructor(fps = 3, size = 300, fg = '#000000', bg = '#ffffff') {
     this.fps = fps;
     this.size = size;
     this.fg = fg;

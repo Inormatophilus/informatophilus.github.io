@@ -815,6 +815,11 @@ input[type="range"]::-webkit-slider-thumb:hover { transform: scale(1.2); }
   transition: transform var(--tr);
   filter: grayscale(1);
   opacity: 0.5;
+  background: none;
+  border: none;
+  color: #f59e0b;
+  padding: 2px;
+  touch-action: manipulation;
 }
 .star.filled { filter: none; opacity: 1; }
 .star:hover { transform: scale(1.2); }

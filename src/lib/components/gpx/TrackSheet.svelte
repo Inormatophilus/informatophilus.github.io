@@ -297,7 +297,7 @@
     {#if showQr && qrChunks.length > 0}
       <div style="padding:0.75rem;border-top:1px solid var(--bd2);display:flex;flex-direction:column;align-items:center;gap:0.5rem">
         <span class="ts-sect-title">QR-Code — {track?.name}</span>
-        <QRDisplay chunks={qrChunks} size={220} />
+        <QRDisplay chunks={qrChunks} size={280} />
       </div>
     {/if}
 
@@ -308,7 +308,7 @@
         <div class="ts-feat-list">
           {#each features as f}
             <div class="ts-feat-item">
-              <span>{f.type === 'gap' ? '🌉' : f.type === 'drop' ? '⬇️' : f.type === 'root' ? '🌳' : f.type === 'rock' ? '🪨' : '📍'}</span>
+              <span>{f.type === 'gap' ? '🌉' : f.type === 'drop' ? '⬇️' : f.type === 'root' ? '🌳' : f.type === 'rock' ? '🗿' : '📍'}</span>
               <span class="ts-feat-name">{f.name}</span>
               {#if f.diff}
                 <span class="ts-feat-diff">{f.diff}</span>

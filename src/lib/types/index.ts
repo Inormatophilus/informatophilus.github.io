@@ -401,19 +401,19 @@ export interface RecordingState {
 // --- Feature Icons & Names Constants ----------------------------------------
 
 export const FEAT_ICONS: Record<FeatureType, string> = {
-  drop: '🪨',
-  gap: '🕳️',
-  root: '🌿',
-  rock: '🪨',
-  steinfeld: '🪨',
-  verblockt: '🧱',
-  steil: '⛰️',
+  drop:       '🦘',
+  gap:        '🕳️',
+  root:       '🌿',
+  rock:       '🗿',
+  steinfeld:  '⛏️',
+  verblockt:  '🧱',
+  steil:      '⛰️',
   northshore: '🪵',
-  sprung: '🚀',
-  flow: '🌊',
-  aussicht: '👁️',
-  goal: '🏆',
-  pause: '☕'
+  sprung:     '🚀',
+  flow:       '🌊',
+  aussicht:   '👁️',
+  goal:       '🏆',
+  pause:      '☕'
 };
 
 export const FEAT_NAMES: Record<FeatureType, string> = {

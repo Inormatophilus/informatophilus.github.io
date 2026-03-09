@@ -133,7 +133,7 @@
     // 2. Standard sequential chunk
     const chunk = parseChunkPayload(raw);
     if (chunk) {
-      const key = `${chunk.idx}:${chunk.data.slice(0, 12)}`;
+      const key = `${chunk.idx}:${chunk.total}:${chunk.data.length}:${chunk.data.slice(0, 20)}`;
       if (seenSeqChunks.has(key)) return;
       seenSeqChunks.add(key);
 

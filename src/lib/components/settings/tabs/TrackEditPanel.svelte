@@ -271,6 +271,15 @@
     editFeature={editingFeat}
     onclose={() => { showFeatPicker = false; editingFeat = null; }}
     onsave={handleFeatSave}
+    onsaveAll={async (feats) => {
+      for (const f of feats) {
+        await tracksStore.addFeature(trackId, f);
+      }
+      if (track) tracksStore.renderFeatureMarkersOnMap(track);
+      showFeatPicker = false;
+      editingFeat    = null;
+      app.toast(`${feats.length} Schlüsselstelle${feats.length !== 1 ? 'n' : ''} gespeichert`, 'success');
+    }}
   />
 {/if}
 

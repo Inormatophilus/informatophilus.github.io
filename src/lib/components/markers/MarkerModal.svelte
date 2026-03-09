@@ -17,7 +17,7 @@
   }
   let { open = $bindable(), marker, lat, lng, onclose, onsave }: Props = $props();
 
-  const EMOJIS = ['📍','⭐','🔥','⚠','🏕','🌊','🪨','🧱','🪵','🚵','🏆','💧','🅿','🚽','🛁'];
+  const EMOJIS = ['📍','⭐','🔥','⚠','🏕','🌊','🗿','🧱','🪵','🚵','🏆','💧','🅿','🚽','🛁'];
   const CATS   = ['point', 'hazard', 'camp', 'water', 'parking', 'other'];
 
   let name    = $state(marker?.name ?? '');

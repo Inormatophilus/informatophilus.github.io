@@ -61,12 +61,16 @@
     onsave={async (feat) => {
       if (editingFeature?.id) {
         await tracksStore.updateFeature(track.id, editingFeature.id, feat);
-      } else {
-        await tracksStore.addFeature(track.id, feat);
         tracksStore.renderFeatureMarkersOnMap(track);
       }
-      addingFeature  = false;
       editingFeature = null;
+    }}
+    onsaveAll={async (feats) => {
+      for (const f of feats) {
+        await tracksStore.addFeature(track.id, f);
+      }
+      tracksStore.renderFeatureMarkersOnMap(track);
+      addingFeature = false;
     }}
   />
 {/if}

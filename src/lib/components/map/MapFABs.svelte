@@ -125,12 +125,7 @@
     onclick={() => app.openSettings()}
     aria-label="Einstellungen"
     title="Einstellungen [S]"
-  >
-    <svg width="18" height="18" viewBox="0 0 18 18" fill="none">
-      <circle cx="9" cy="9" r="2.8" stroke="currentColor" stroke-width="1.5"/>
-      <path d="M9 1v2.2M9 14.8V17M1 9h2.2M14.8 9H17M2.9 2.9l1.6 1.6M13.5 13.5l1.6 1.6M2.9 15.1l1.6-1.6M13.5 4.5l1.6-1.6" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
-    </svg>
-  </button>
+  >⚙️</button>
 
   <!-- QR import/share -->
   <button

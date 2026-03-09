@@ -5,7 +5,7 @@
   import { projectsStore } from '$lib/stores/projects.svelte';
   import { saveGpsEmoji } from '$lib/services/storage';
 
-  const GPS_EMOJIS = ['🦄','🏔','🚵','⛰','🌲','🦊','🔥','⭐','💎','🎯','🪨','🌊','🌀','🐺','🦅','🏆'];
+  const GPS_EMOJIS = ['🦄','🏔','🚵','⛰','🌲','🦊','🔥','⭐','💎','🎯','🗿','🌊','🌀','🐺','🦅','🏆'];
 
   function setGpsEmoji(em: string) {
     app.setGpsEmoji(em);

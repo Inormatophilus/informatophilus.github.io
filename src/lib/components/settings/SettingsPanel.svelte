@@ -29,12 +29,16 @@
 <!-- svelte-ignore a11y-click-events-have-key-events a11y-no-static-element-interactions -->
 <div
   class="settings-backdrop {app.settingsOpen ? 'open' : ''}"
-  onclick={() => app.closeSettings()}
+  onclick={() => !app.featurePlacement && app.closeSettings()}
+  style={app.featurePlacement ? 'pointer-events: none' : ''}
   role="presentation"
 ></div>
 
 <!-- Panel -->
-<aside class="settings-panel {app.settingsOpen ? 'open' : ''}" aria-label="Einstellungen">
+<aside
+  class="settings-panel {app.settingsOpen ? 'open' : ''}"
+  aria-label="Einstellungen"
+>
   <!-- Header -->
   <div style="display:flex;align-items:center;justify-content:space-between;padding:1rem;border-bottom:1px solid var(--bd)">
     <span style="font-family:var(--fh);font-size:1.2rem;font-weight:700;letter-spacing:0.05em;text-transform:uppercase">

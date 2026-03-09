@@ -11,6 +11,7 @@ import { haversineM } from '$lib/services/geo';
 import { app } from './app.svelte';
 import { projectsStore } from './projects.svelte';
 import { mapStore } from './map.svelte';
+import { markersStore } from './markers.svelte';
 import { FEAT_ICONS } from '$lib/types';
 import type { GmtwTrack, TrackCat, TrackCondition, TrackFeature, TrackEdit, GpxPoint } from '$lib/types';
 
@@ -511,18 +512,21 @@ class TracksStore {
       }
     }
 
-    // Feature markers
+    // Feature markers — half-size of regular markers (16*scale), neon accent border
     const features = this.getFeatures(track.id);
+    const featScale = markersStore.markerScale;
+    const featSize  = Math.max(14, Math.round(16 * featScale)); // half of LOCS 32*scale
+    const featFont  = Math.max(0.5, featSize * 0.055);
     for (const f of features) {
       const icon = FEAT_ICONS[f.type] ?? '📍';
       const divIcon = L.divIcon({
-        className: 'feat-marker',
-        html:      `<span style="font-size:1.4rem">${icon}</span>`,
-        iconSize:  [28, 28],
-        iconAnchor:[14, 14],
+        className: '',
+        html: `<div style="font-size:${featFont}rem;background:rgba(10,14,20,0.85);border:1.5px solid #c8ff00;border-radius:50%;width:${featSize}px;height:${featSize}px;display:flex;align-items:center;justify-content:center;box-shadow:0 1px 6px rgba(0,0,0,0.6);pointer-events:auto">${icon}</div>`,
+        iconSize:  [featSize, featSize],
+        iconAnchor:[featSize / 2, featSize / 2],
       });
       const m = L.marker([f.lat, f.lng], { icon: divIcon })
-        .bindTooltip(`${icon} ${f.name}`)
+        .bindTooltip(`${icon} ${f.name || f.type}`, { direction: 'top', offset: [0, -(featSize / 2 + 2)] })
         .addTo(map);
       bundle.featureMarkers.push(m);
     }
@@ -544,17 +548,20 @@ class TracksStore {
       bundle.featureMarkers = [];
     }
 
+    const featScale = markersStore.markerScale;
+    const featSize  = Math.max(14, Math.round(16 * featScale));
+    const featFont  = Math.max(0.5, featSize * 0.055);
     const newMarkers: import('leaflet').Marker[] = [];
     for (const f of features) {
       const icon = FEAT_ICONS[f.type] ?? '📍';
       const divIcon = L.divIcon({
-        className: 'feat-marker',
-        html:      `<span style="font-size:1.4rem">${icon}</span>`,
-        iconSize:  [28, 28],
-        iconAnchor:[14, 14],
+        className: '',
+        html: `<div style="font-size:${featFont}rem;background:rgba(10,14,20,0.85);border:1.5px solid #c8ff00;border-radius:50%;width:${featSize}px;height:${featSize}px;display:flex;align-items:center;justify-content:center;box-shadow:0 1px 6px rgba(0,0,0,0.6);pointer-events:auto">${icon}</div>`,
+        iconSize:  [featSize, featSize],
+        iconAnchor:[featSize / 2, featSize / 2],
       });
       const m = L.marker([f.lat, f.lng], { icon: divIcon })
-        .bindTooltip(`${icon} ${f.name}`)
+        .bindTooltip(`${icon} ${f.name || f.type}`, { direction: 'top', offset: [0, -(featSize / 2 + 2)] })
         .addTo(map);
       newMarkers.push(m);
     }

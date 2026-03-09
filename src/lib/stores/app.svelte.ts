@@ -34,6 +34,7 @@ class AppStore {
   settingsTab = $state<'profile' | 'general' | 'tracks' | 'backup' | 'markers' | 'qr' | 'app'>('general');
   pwaInstallable = $state(false);
   swUpdateAvailable = $state(false);
+  featurePlacement = $state(false);
 
   // Derived
   isDark = $derived(this.theme === 'dark');
@@ -147,11 +148,21 @@ class AppStore {
 
   openSettings(tab?: AppStore['settingsTab']): void {
     if (tab) this.settingsTab = tab;
+    this.featurePlacement = false; // safety: clear any stuck placement mode
     this.settingsOpen = true;
   }
 
   closeSettings(): void {
     this.settingsOpen = false;
+    this.featurePlacement = false; // safety: always clear on close
+  }
+
+  enterFeaturePlacement(): void {
+    this.featurePlacement = true;
+  }
+
+  exitFeaturePlacement(): void {
+    this.featurePlacement = false;
   }
 
   switchTab(tab: AppStore['settingsTab']): void {
