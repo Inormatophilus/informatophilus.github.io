@@ -1,24 +1,56 @@
 // =============================================================================
-// GMTW Trail Map — QR-Code Master-Engine
+// GMTW Trail Map — QR-Code Master-Engine v2
 //
-// Vollständige Implementierung:
-// - Encoding: RDP-Vereinfachung → Delta-Encoding → pako DEFLATE → Base64URL → Chunking
-// - Decoding: Chunk-Sammlung → Base64URL → inflate → Reconstruct GPX
-// - Animation: QRAnimator-Klasse für animierte QR-Sequenzen
-// - Auto-Detect: Payload-Typ erkennen (track/tracks/project/backup/marker/json)
+// Professionelles Multi-QR-System für GPX-Track-Sharing zwischen Geräten.
+//
+// Encoding: RDP-Vereinfachung → Delta-Encoding → pako DEFLATE → Base64URL → Chunking
+// Decoding: Chunk-Sammlung → Base64URL → inflate → Reconstruct GPX
+// Animation: QRAnimator-Klasse für animierte QR-Sequenzen
+// Auto-Detect: Payload-Typ erkennen (track/tracks/project/backup/marker/json)
+//
+// v2-Protokoll: Jeder Chunk enthält first/last Flags + Track-Name + CRC
 // =============================================================================
 
 import pako from 'pako';
 import qrcodeGenerator from 'qrcode-generator';
-import type { GpxPoint, GmtwTrack, QrChunk, QrChunkBuffer, QrPayloadType } from '$lib/types';
+import type {
+  GpxPoint, GmtwTrack, QrChunk, QrChunkBuffer, QrPayloadType,
+  TrackShareData, TrackFeature, TrackEdit, RunRecord
+} from '$lib/types';
 import { simplifyPoints } from './geo';
 import { parseGpx, buildGpxString } from './gpx';
 
 // --- Konfiguration -----------------------------------------------------------
 
-export const QR_CHUNK_SIZE = 500;  // Zeichen pro QR-Code — 500 für zuverlässiges Scannen
-export const QR_MAX_PTS = 1000;    // Max. Punkte nach RDP-Vereinfachung
-export const QR_VERSION = 1;       // Protokoll-Version
+/**
+ * Zeichen pro QR-Code Chunk.
+ * 250 Zeichen + ~60 Byte JSON-Wrapper = ~310 Bytes total.
+ * → QR Version 9 (53 Module) mit ECL M passt → ~5.6px/Modul bei 340px Canvas.
+ * Outdoor-Scanning zwischen Handys zuverlässig möglich.
+ */
+export const QR_CHUNK_SIZE = 250;
+
+/** Max. Punkte nach RDP-Vereinfachung */
+export const QR_MAX_PTS = 1000;
+
+/** Protokoll-Version (v2 = first/last Flags + name + checksum) */
+export const QR_VERSION = 2;
+
+/** Minimale Modulgröße in Pixeln für zuverlässiges Scannen */
+const MIN_MODULE_PX = 4;
+
+// --- CRC16 für Payload-Verifizierung ----------------------------------------
+
+function crc16(str: string): string {
+  let crc = 0xFFFF;
+  for (let i = 0; i < str.length; i++) {
+    crc ^= str.charCodeAt(i);
+    for (let j = 0; j < 8; j++) {
+      crc = (crc & 1) ? ((crc >>> 1) ^ 0xA001) : (crc >>> 1);
+    }
+  }
+  return crc.toString(16).padStart(4, '0');
+}
 
 // --- Base64URL Codec ---------------------------------------------------------
 
@@ -49,12 +81,23 @@ export function parseGpxPoints(gpxStr: string): GpxPoint[] {
 }
 
 /**
- * Compact-Encoding: RDP-vereinfachte Punkte → Delta-Encoding → DEFLATE.
+ * Compact-Encoding v2: Punkte + vollständige Metadaten → DEFLATE.
  *
- * Delta-Encoding spart ~60% gegenüber absoluten Koordinaten:
- * Statt `[51.421812, 7.492612]` werden nur die Differenzen in ganzen Zahlen (×1e5) gespeichert.
+ * Enthält ALLES was zu einem Track gehört:
+ * - Delta-kodierte Koordinaten (~60% Ersparnis)
+ * - Schlüsselstellen (Features) als strukturierte Daten
+ * - Bewertung, Beschreibung, Streckenzustand
+ * - Optional: Rennzeiten mit Splits und Stürzen
+ *
+ * @param track  GmtwTrack (Name, Kategorie, Farbe)
+ * @param pts    Nur Track-Punkte (KEINE Feature-Waypoints!)
+ * @param meta   Optionale Metadaten (Features, Rating, Runs, etc.)
  */
-export function encodeTrackCompact(track: GmtwTrack, pts: GpxPoint[]): Uint8Array {
+export function encodeTrackCompact(
+  track: GmtwTrack,
+  pts: GpxPoint[],
+  meta?: TrackShareData
+): Uint8Array {
   const simplified = simplifyPoints(pts, QR_MAX_PTS);
 
   // Delta-Encoding (×1e5 für ~1m Präzision)
@@ -75,7 +118,8 @@ export function encodeTrackCompact(track: GmtwTrack, pts: GpxPoint[]): Uint8Arra
     prevEle += dele;
   }
 
-  const payload = JSON.stringify({
+  // Basis-Payload mit Koordinaten
+  const payload: Record<string, unknown> = {
     v: QR_VERSION,
     n: track.name,
     c: track.cat,
@@ -84,9 +128,55 @@ export function encodeTrackCompact(track: GmtwTrack, pts: GpxPoint[]): Uint8Arra
     lngs,
     eles,
     total: simplified.length
-  });
+  };
 
-  return pako.deflate(payload, { level: 9 });
+  // v2: Metadaten hinzufügen (kompakt benannt um Platz zu sparen)
+  if (meta) {
+    if (meta.desc) payload.desc = meta.desc;
+    if (meta.rating !== undefined && meta.rating > 0) payload.rat = meta.rating;
+    if (meta.cond && meta.cond !== 'unknown') payload.cond = meta.cond;
+
+    // Features kompakt kodieren (ohne id/date — werden beim Import neu generiert)
+    if (meta.features && meta.features.length > 0) {
+      payload.feats = meta.features.map(f => ({
+        t: f.type,
+        d: f.diff,
+        n: f.name,
+        la: Math.round(f.lat * 1e6) / 1e6,
+        ln: Math.round(f.lng * 1e6) / 1e6,
+      }));
+    }
+
+    // Bearbeitungshistorie (letzte 10, kompakt)
+    if (meta.edits && meta.edits.length > 0) {
+      payload.edits = meta.edits.slice(0, 10).map(e => ({
+        t: e.type,
+        nv: e.newVal,
+        ov: e.oldVal,
+        nm: e.name,
+      }));
+    }
+
+    // Rennzeiten kompakt kodieren (optional, nur wenn runs[] nicht leer)
+    if (meta.runs && meta.runs.length > 0) {
+      payload.runs = meta.runs.map(r => ({
+        ms: r.totalMs,
+        sp: r.splits,
+        d: r.date,
+        r: r.riderName,
+        m: r.muniName,
+        w: r.wheelSize,
+        sc: r.seatClampColor,
+        sig: r.signature,
+        fc: r.fallEvents.length, // Sturzanzahl
+        fe: r.fallEvents.length > 0
+          ? r.fallEvents.map(f => ({ t: f.type, ts: f.ts, la: f.lat, ln: f.lng }))
+          : undefined,
+      }));
+    }
+  }
+
+  return pako.deflate(JSON.stringify(payload), { level: 9 });
 }
 
 /** Kodiert ein beliebiges JSON-Objekt als komprimierter Payload */
@@ -94,38 +184,100 @@ export function encodeJsonCompact(obj: unknown): Uint8Array {
   return pako.deflate(JSON.stringify(obj), { level: 9 });
 }
 
-/** Zerlegt komprimierten Payload in Chunks und erstellt Chunk-Payloads */
-export function buildChunks(data: Uint8Array, type: QrPayloadType): string[] {
+/**
+ * Zerlegt komprimierten Payload in Chunks mit v2-Protokoll.
+ * Jeder Chunk enthält:
+ * - idx/total für Position in der Sequenz
+ * - first=true auf dem ersten, last=true auf dem letzten
+ * - name für UI-Anzeige
+ * - checksum (CRC16 des gesamten Base64-Payloads) zur Verifizierung
+ */
+export function buildChunks(data: Uint8Array, type: QrPayloadType, name?: string): string[] {
   const encoded = b64uEncode(data);
+  const checksum = crc16(encoded);
   const chunks: string[] = [];
-  const total = Math.ceil(encoded.length / QR_CHUNK_SIZE);
+  const total = Math.max(1, Math.ceil(encoded.length / QR_CHUNK_SIZE));
+
   for (let i = 0; i < total; i++) {
     const slice = encoded.slice(i * QR_CHUNK_SIZE, (i + 1) * QR_CHUNK_SIZE);
-    const chunkObj: QrChunk = { idx: i, total, type, version: QR_VERSION, data: slice };
+    const chunkObj: QrChunk = {
+      idx: i,
+      total,
+      type,
+      version: QR_VERSION,
+      data: slice,
+    };
+    // v2: first/last Flags für klare Sequenz-Erkennung
+    if (i === 0) {
+      chunkObj.first = true;
+      if (name) chunkObj.name = name.slice(0, 30); // Kompakter Name
+    }
+    if (i === total - 1) {
+      chunkObj.last = true;
+      chunkObj.checksum = checksum;
+    }
     chunks.push(JSON.stringify(chunkObj));
   }
   return chunks;
 }
 
-/** Vollständiger Encode-Workflow: Track → Chunks.
- *  @param gpxOverride  Optional GPX-String (z.B. mit injizierten Features), überschreibt track.gpxString
+/**
+ * Vollständiger Encode-Workflow: Track + alle Metadaten → QR-Chunks.
+ *
+ * WICHTIG: Verwendet track.gpxString direkt (NUR trkpt-Punkte).
+ * Features werden als strukturierte Daten im Payload kodiert,
+ * NICHT als GPX-Waypoints (das verhindert Korruption der Trackgeometrie).
+ *
+ * @param track  GmtwTrack mit gpxString
+ * @param meta   Optionale Metadaten (Features, Rating, Runs, etc.)
  */
-export function encodeTrackToChunks(track: GmtwTrack, gpxOverride?: string): string[] {
-  const pts = parseGpxPoints(gpxOverride ?? track.gpxString);
+export function encodeTrackToChunks(track: GmtwTrack, meta?: TrackShareData): string[] {
+  // NUR echte Track-Punkte extrahieren (keine Feature-Waypoints)
+  const pts = parseGpxTrackPoints(track.gpxString);
   if (pts.length === 0) return [];
-  const compressed = encodeTrackCompact(track, pts);
-  return buildChunks(compressed, 'track');
+  const compressed = encodeTrackCompact(track, pts, meta);
+  return buildChunks(compressed, 'track', track.name);
+}
+
+/**
+ * Extrahiert NUR trkpt-Elemente aus GPX (KEINE wpt/rtept).
+ * Verhindert dass Feature-Waypoints in die Trackgeometrie gelangen.
+ */
+function parseGpxTrackPoints(gpxStr: string): GpxPoint[] {
+  try {
+    const parser = new DOMParser();
+    const doc = parser.parseFromString(gpxStr, 'application/xml');
+    if (doc.querySelector('parsererror')) return [];
+    const ptEls = Array.from(doc.querySelectorAll('trkpt'));
+    return ptEls
+      .map((el): GpxPoint | null => {
+        const lat = parseFloat(el.getAttribute('lat') ?? '');
+        const lng = parseFloat(el.getAttribute('lon') ?? '');
+        if (isNaN(lat) || isNaN(lng)) return null;
+        const eleRaw = parseFloat(el.querySelector('ele')?.textContent ?? '');
+        const timeStr = el.querySelector('time')?.textContent ?? '';
+        return {
+          lat, lng,
+          ele: isNaN(eleRaw) ? undefined : eleRaw,
+          time: timeStr ? new Date(timeStr).getTime() : undefined
+        };
+      })
+      .filter((p): p is GpxPoint => p !== null);
+  } catch {
+    // Fallback: parseGpxPoints (inkl. wpt) wenn trkpt-Parsing fehlschlägt
+    return parseGpxPoints(gpxStr);
+  }
 }
 
 /** Vollständiger Encode-Workflow: beliebiges JSON → Chunks */
-export function encodeObjectToChunks(obj: unknown, type: QrPayloadType): string[] {
+export function encodeObjectToChunks(obj: unknown, type: QrPayloadType, name?: string): string[] {
   const compressed = encodeJsonCompact(obj);
-  return buildChunks(compressed, type);
+  return buildChunks(compressed, type, name);
 }
 
 // --- Decoding: QR-String → GPX/JSON -----------------------------------------
 
-/** Parst einen QR-Code-String zu einem QrChunk-Objekt */
+/** Parst einen QR-Code-String zu einem QrChunk-Objekt (v1 + v2 kompatibel) */
 export function parseChunkPayload(raw: string): QrChunk | null {
   try {
     const obj = JSON.parse(raw) as QrChunk;
@@ -152,15 +304,25 @@ export function collectChunk(chunk: QrChunk, buffer: QrChunkBuffer): boolean {
   return buffer.chunks.size === chunk.total;
 }
 
-/** Rekonstruiert Payload aus QrChunkBuffer */
-export function assembleChunks(buffer: QrChunkBuffer): Uint8Array {
+/** Rekonstruiert Payload aus QrChunkBuffer, optional mit CRC-Verifikation */
+export function assembleChunks(buffer: QrChunkBuffer, expectedChecksum?: string): Uint8Array {
   const parts: string[] = [];
   for (let i = 0; i < buffer.total; i++) {
     const chunk = buffer.chunks.get(i);
-    if (!chunk) throw new Error(`Missing chunk ${i}/${buffer.total}`);
+    if (!chunk) throw new Error(`Fehlender Chunk ${i}/${buffer.total}`);
     parts.push(chunk);
   }
-  return b64uDecode(parts.join(''));
+  const full = parts.join('');
+
+  // v2: CRC-Verifizierung wenn Checksum vorhanden
+  if (expectedChecksum) {
+    const actual = crc16(full);
+    if (actual !== expectedChecksum) {
+      throw new Error(`Prüfsumme ungültig (erwartet: ${expectedChecksum}, erhalten: ${actual}). Bitte erneut scannen.`);
+    }
+  }
+
+  return b64uDecode(full);
 }
 
 /** Dekomprimiert Payload zurück zu JSON-String */
@@ -168,31 +330,41 @@ export function decompressPayload(data: Uint8Array): string {
   return pako.inflate(data, { to: 'string' });
 }
 
+/** Ergebnis-Typ für vollständiges Track-Decoding (v2) */
+export interface DecodedTrackResult {
+  points: GpxPoint[];
+  name: string;
+  cat: string;
+  color: string;
+  // v2: Metadaten
+  desc?: string;
+  rating?: number;
+  cond?: string;
+  features?: TrackFeature[];
+  edits?: TrackEdit[];
+  runs?: RunRecord[];
+}
+
 /**
- * Rekonstruiert GPX-Track aus compact-encoded Payload.
- * Delta-Decoding → absolute Koordinaten → GPX-String.
+ * Rekonstruiert GPX-Track + alle Metadaten aus compact-encoded Payload (v1+v2 kompatibel).
+ * Delta-Decoding → absolute Koordinaten.
+ * v2: Zusätzlich Features, Bewertung, Rennzeiten etc.
  */
-export function decodeCompactToTrack(
-  jsonStr: string
-): { points: GpxPoint[]; name: string; cat: string; color: string } {
-  const p = JSON.parse(jsonStr) as {
-    v: number;
-    n: string;
-    c: string;
-    col: string;
-    lats: number[];
-    lngs: number[];
-    eles: number[];
-    total: number;
-  };
+export function decodeCompactToTrack(jsonStr: string): DecodedTrackResult {
+  const p = JSON.parse(jsonStr) as Record<string, unknown>;
+
+  // Delta-Decoding der Koordinaten
+  const lats = p.lats as number[];
+  const lngs = p.lngs as number[];
+  const eles = p.eles as number[];
 
   const points: GpxPoint[] = [];
   let accLat = 0, accLng = 0, accEle = 0;
 
-  for (let i = 0; i < p.lats.length; i++) {
-    accLat += p.lats[i];
-    accLng += p.lngs[i];
-    accEle += p.eles[i];
+  for (let i = 0; i < lats.length; i++) {
+    accLat += lats[i];
+    accLng += lngs[i];
+    accEle += eles[i];
     points.push({
       lat: accLat / 1e5,
       lng: accLng / 1e5,
@@ -200,12 +372,69 @@ export function decodeCompactToTrack(
     });
   }
 
-  return {
+  const result: DecodedTrackResult = {
     points,
-    name: p.n || 'QR-Track',
-    cat: p.c || 'custom',
-    color: p.col || '#a855f7'
+    name: (p.n as string) || 'QR-Track',
+    cat: (p.c as string) || 'custom',
+    color: (p.col as string) || '#a855f7'
   };
+
+  // v2: Metadaten extrahieren (falls vorhanden)
+  if (p.desc) result.desc = p.desc as string;
+  if (p.rat !== undefined) result.rating = p.rat as number;
+  if (p.cond) result.cond = p.cond as string;
+
+  // v2: Features rekonstruieren
+  if (Array.isArray(p.feats)) {
+    result.features = (p.feats as Array<{ t: string; d: number; n: string; la: number; ln: number }>).map(f => ({
+      id: `feat_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+      type: f.t as TrackFeature['type'],
+      diff: f.d,
+      name: f.n,
+      lat: f.la,
+      lng: f.ln,
+      date: Date.now(),
+    }));
+  }
+
+  // v2: Bearbeitungshistorie rekonstruieren
+  if (Array.isArray(p.edits)) {
+    result.edits = (p.edits as Array<{ t: string; nv: string; ov: string; nm: string }>).map(e => ({
+      type: e.t,
+      newVal: e.nv,
+      oldVal: e.ov,
+      name: e.nm,
+      date: Date.now(),
+    }));
+  }
+
+  // v2: Rennzeiten rekonstruieren
+  if (Array.isArray(p.runs)) {
+    result.runs = (p.runs as Array<{
+      ms: number; sp: number[]; d: string; r: string; m: string;
+      w: string; sc: string; sig: string; fc: number;
+      fe?: Array<{ t: string; ts: number; la: number; ln: number }>;
+    }>).map(r => ({
+      id: `run_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+      trackId: '', // Wird beim Import auf die neue Track-ID gesetzt
+      date: r.d,
+      totalMs: r.ms,
+      splits: r.sp,
+      riderName: r.r,
+      muniName: r.m,
+      wheelSize: r.w,
+      seatClampColor: r.sc,
+      signature: r.sig,
+      fallEvents: r.fe?.map(f => ({
+        type: f.t as 'fall' | 'dismount',
+        ts: f.ts,
+        lat: f.la,
+        lng: f.ln,
+      })) ?? [],
+    }));
+  }
+
+  return result;
 }
 
 /**
@@ -232,46 +461,54 @@ export function detectPayloadType(decoded: unknown): QrPayloadType {
 
 // --- QR-Code Rendering (qrcode-generator) ------------------------------------
 
-/** Zeichnet QR-Code auf Canvas-Element mit Quiet Zone für zuverlässiges Scannen */
+/**
+ * Zeichnet QR-Code auf Canvas-Element.
+ * v2: Erzwingt Mindestgröße pro Modul (MIN_MODULE_PX) für zuverlässiges Outdoor-Scanning.
+ * Verwendet ECL 'M' (15% Fehlerkorrektur) statt 'L' für bessere Erkennung.
+ */
 export function renderQrCanvas(
   canvas: HTMLCanvasElement,
   data: string,
-  size = 300,
+  size = 340,
   fg = '#000000',
   bg = '#ffffff'
 ): void {
   try {
-    // qrcode-generator: CJS default interop (Vite handles it)
     const qrFn = (qrcodeGenerator as unknown as { default?: typeof qrcodeGenerator }).default ?? qrcodeGenerator;
-    const qr = qrFn(0, 'L');  // Error-Correction 'L' → weniger dichte Codes, besser scannbar
+    const qr = qrFn(0, 'M'); // ECL 'M' = 15% Fehlerkorrektur → robuster Outdoor
     qr.addData(data);
     qr.make();
     const modules = qr.getModuleCount();
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
-    canvas.width = size;
-    canvas.height = size;
 
-    // Quiet Zone: 4 Module Weißraum rundherum (QR-Standard ISO/IEC 18004)
+    // Quiet Zone: 4 Module Weißraum (ISO/IEC 18004)
     const quietZone = 4;
     const totalModules = modules + quietZone * 2;
-    const cellSize = size / totalModules;
 
-    // Hintergrund komplett weiß (inkl. Quiet Zone)
+    // v2: Sicherstellen, dass jedes Modul mindestens MIN_MODULE_PX breit ist
+    const cellSize = Math.max(MIN_MODULE_PX, Math.floor(size / totalModules));
+    const actualSize = cellSize * totalModules;
+
+    canvas.width = actualSize;
+    canvas.height = actualSize;
+
+    // Hintergrund komplett weiß (inkl. Quiet Zone) — crisp, kein Antialiasing
+    ctx.imageSmoothingEnabled = false;
     ctx.fillStyle = bg;
-    ctx.fillRect(0, 0, size, size);
+    ctx.fillRect(0, 0, actualSize, actualSize);
 
-    // QR-Module mit Offset für Quiet Zone
+    // QR-Module mit Offset für Quiet Zone — ganzzahlige Pixel, kein Blur
     ctx.fillStyle = fg;
     const offset = quietZone * cellSize;
     for (let r = 0; r < modules; r++) {
       for (let c = 0; c < modules; c++) {
         if (qr.isDark(r, c)) {
           ctx.fillRect(
-            Math.floor(offset + c * cellSize),
-            Math.floor(offset + r * cellSize),
-            Math.ceil(cellSize),
-            Math.ceil(cellSize)
+            offset + c * cellSize,
+            offset + r * cellSize,
+            cellSize,
+            cellSize
           );
         }
       }
@@ -296,7 +533,7 @@ export class QRAnimator {
   /** Callback: wird nach jedem Frame-Wechsel aufgerufen */
   onFrame?: (idx: number, total: number) => void;
 
-  constructor(fps = 3, size = 300, fg = '#000000', bg = '#ffffff') {
+  constructor(fps = 2.5, size = 340, fg = '#000000', bg = '#ffffff') {
     this.fps = fps;
     this.size = size;
     this.fg = fg;
@@ -355,6 +592,15 @@ export class QRAnimator {
 
   get total(): number { return this.chunks.length; }
   get index(): number { return this.currentIdx; }
+
+  /** Gibt Metadaten des aktuellen Chunks zurück (v2: name, first, last) */
+  get currentChunkMeta(): { first?: boolean; last?: boolean; name?: string } | null {
+    if (this.chunks.length === 0) return null;
+    try {
+      const obj = JSON.parse(this.chunks[this.currentIdx]) as QrChunk;
+      return { first: obj.first, last: obj.last, name: obj.name };
+    } catch { return null; }
+  }
 
   private renderCurrent(): void {
     if (!this.canvas || this.chunks.length === 0) return;

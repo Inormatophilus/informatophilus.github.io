@@ -280,7 +280,7 @@
       <span class="text-xs text-dim">
         {qrChunks.length === 1 ? 'Einzel-QR-Code' : `${qrChunks.length} QR-Codes (animierte Sequenz)`}
       </span>
-      <QRDisplay chunks={qrChunks} size={240} fps={2.5} />
+      <QRDisplay chunks={qrChunks} size={340} fps={2.5} />
       {#if qrChunks.length > 1}
         <p class="text-xs text-dim" style="text-align:center;max-width:220px">
           Gerät auf Kamera halten — alle Frames werden automatisch gesammelt und importiert.

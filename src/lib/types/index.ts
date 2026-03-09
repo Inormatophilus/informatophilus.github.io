@@ -258,6 +258,20 @@ export interface RaceEngineState {
 
 // --- QR Code System ----------------------------------------------------------
 
+/**
+ * Vollständige Track-Metadaten für QR-Transfer.
+ * Enthält alles was zu einem Track gehört: Features, Bewertung, Beschreibung,
+ * Streckenzustand, Bearbeitungshistorie und optional Rennzeiten.
+ */
+export interface TrackShareData {
+  desc?: string;               // Beschreibung (max 400 Zeichen)
+  rating?: number;             // 0-5 Sterne
+  cond?: string;               // TrackCondition: dry|muddy|icy|unknown
+  features?: TrackFeature[];   // Schlüsselstellen (vollständig strukturiert)
+  edits?: TrackEdit[];         // Bearbeitungshistorie
+  runs?: RunRecord[];          // Rennzeiten (optional, per Toggle)
+}
+
 export type QrPayloadType =
   | 'track'
   | 'tracks'
@@ -274,6 +288,10 @@ export interface QrChunk {
   type: QrPayloadType;
   version: number;
   data: string; // base64url encoded chunk
+  first?: boolean;  // true on first chunk of a sequence
+  last?: boolean;   // true on final chunk of a sequence
+  name?: string;    // track/payload name for display
+  checksum?: string; // CRC of full payload for verification
 }
 
 export interface QrChunkBuffer {
