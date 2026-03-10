@@ -246,7 +246,7 @@ class MarkersStore {
       const locRef = loc;
       const m = L.marker([loc.lat, loc.lng], { icon })
         .addTo(mapStore.map);
-      m.on('click', () => { this.selectedLoc = locRef; });
+      m.on('click', () => { if (!app.featurePlacement) this.selectedLoc = locRef; });
       loc._layer = m;
     }
   }
@@ -281,7 +281,7 @@ class MarkersStore {
     const markerRef = marker;
     const m = L.marker([marker.lat, marker.lng], { icon })
       .addTo(mapStore.map);
-    m.on('click', () => { this.selectedCustomMarker = markerRef; });
+    m.on('click', () => { if (!app.featurePlacement) this.selectedCustomMarker = markerRef; });
     marker._layer = m;
   }
 

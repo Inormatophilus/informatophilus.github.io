@@ -382,9 +382,14 @@ class TracksStore {
 
   async setRating(trackId: string, stars: number): Promise<void> {
     const meta = await this._ensureMeta(trackId);
-    meta.rating = Math.max(0, Math.min(5, stars));
+    const old  = meta.rating ?? 0;
+    const newVal = Math.max(0, Math.min(5, stars));
+    if (newVal === old) return;
+    meta.rating = newVal;
     await db.trackMeta.put(meta);
     this._metaCache = { ...this._metaCache, [trackId]: meta };
+    const edit: TrackEdit = { type: 'rating', newVal: '★'.repeat(newVal), oldVal: old > 0 ? '★'.repeat(old) : '—', name: 'Bewertung', date: Date.now() };
+    await this.addEdit(trackId, edit);
   }
 
   // ---------------------------------------------------------------------------
@@ -437,7 +442,10 @@ class TracksStore {
     meta.condition = cond;
     await db.trackMeta.put(meta);
     this._metaCache = { ...this._metaCache, [trackId]: meta };
-    const condLabels: Record<TrackCondition, string> = { dry: '🌞 Trocken', muddy: '💧 Schlammig', icy: '🧊 Eisig', unknown: '❓ Unbekannt' };
+    const condLabels: Record<TrackCondition, string> = {
+      dry: '🌞 Trocken', muddy: '💧 Schlammig', icy: '🧊 Eisig', unknown: '❓ Unbekannt',
+      pristine: '⭐ Neuwertig', good: '✅ Gut erhalten', worn: '🔧 Abgenutzt', rough: '💀 Abgerockt',
+    };
     const edit: TrackEdit = { type: 'condition', newVal: condLabels[cond], oldVal: condLabels[old], name: 'Zustand', date: Date.now() };
     await this.addEdit(trackId, edit);
   }
@@ -525,7 +533,7 @@ class TracksStore {
         iconSize:  [featSize, featSize],
         iconAnchor:[featSize / 2, featSize / 2],
       });
-      const m = L.marker([f.lat, f.lng], { icon: divIcon })
+      const m = L.marker([f.lat, f.lng], { icon: divIcon, bubblingMouseEvents: false })
         .bindTooltip(`${icon} ${f.name || f.type}`, { direction: 'top', offset: [0, -(featSize / 2 + 2)] })
         .addTo(map);
       bundle.featureMarkers.push(m);
@@ -538,20 +546,24 @@ class TracksStore {
   async renderFeatureMarkersOnMap(track: GmtwTrack): Promise<void> {
     if (!mapStore.map) return;
     const map = mapStore.map;
+
+    const bundle = this._layers.get(track.id);
+    // No bundle = track not yet rendered on map → do full render (creates bundle with features)
+    if (!bundle) {
+      if (track.visible) await this.renderTrackOnMap(track);
+      return;
+    }
+
     const L   = await import('leaflet');
     const features = this.getFeatures(track.id);
 
     // Remove existing feature markers
-    const bundle = this._layers.get(track.id);
-    if (bundle) {
-      for (const m of bundle.featureMarkers) map.removeLayer(m);
-      bundle.featureMarkers = [];
-    }
+    for (const m of bundle.featureMarkers) map.removeLayer(m);
+    bundle.featureMarkers = [];
 
     const featScale = markersStore.markerScale;
     const featSize  = Math.max(14, Math.round(16 * featScale));
     const featFont  = Math.max(0.5, featSize * 0.055);
-    const newMarkers: import('leaflet').Marker[] = [];
     for (const f of features) {
       const icon = FEAT_ICONS[f.type] ?? '📍';
       const divIcon = L.divIcon({
@@ -560,14 +572,13 @@ class TracksStore {
         iconSize:  [featSize, featSize],
         iconAnchor:[featSize / 2, featSize / 2],
       });
-      const m = L.marker([f.lat, f.lng], { icon: divIcon })
+      const m = L.marker([f.lat, f.lng], {
+        icon: divIcon,
+        bubblingMouseEvents: false,
+      })
         .bindTooltip(`${icon} ${f.name || f.type}`, { direction: 'top', offset: [0, -(featSize / 2 + 2)] })
         .addTo(map);
-      newMarkers.push(m);
-    }
-
-    if (bundle) {
-      bundle.featureMarkers = newMarkers;
+      bundle.featureMarkers.push(m);
     }
   }
 
@@ -630,7 +641,10 @@ class TracksStore {
       this._metaCache = { ...this._metaCache, [trackId]: existing };
       return { ...existing };
     }
-    return { trackId, features: [], edits: [] };
+    // New entry — seed the cache immediately to prevent concurrent calls from racing
+    const fresh: TrackMeta = { trackId, features: [], edits: [] };
+    this._metaCache = { ...this._metaCache, [trackId]: fresh };
+    return { ...fresh };
   }
 
   getTrack(id: string): GmtwTrack | undefined {

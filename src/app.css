@@ -580,7 +580,7 @@ input[type="range"]::-webkit-slider-thumb:hover { transform: scale(1.2); }
 .settings-panel {
   position: fixed;
   top: 0;
-  right: 0;
+  right: calc(-1 * min(420px, 100vw)); /* off-screen when closed — NO transform = no fixed-child containment block */
   bottom: 0;
   width: min(420px, 100vw);
   background: var(--s1);
@@ -589,10 +589,9 @@ input[type="range"]::-webkit-slider-thumb:hover { transform: scale(1.2); }
   display: flex;
   flex-direction: column;
   box-shadow: var(--shadow-lg);
-  transform: translateX(100%);
-  transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  transition: right 0.3s cubic-bezier(0.4, 0, 0.2, 1);
 }
-.settings-panel.open { transform: translateX(0); }
+.settings-panel.open { right: 0; }
 
 .settings-backdrop {
   position: fixed;

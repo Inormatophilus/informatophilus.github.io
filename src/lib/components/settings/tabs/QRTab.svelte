@@ -3,6 +3,7 @@
   import { markersStore } from '$lib/stores/markers.svelte';
   import { projectsStore } from '$lib/stores/projects.svelte';
   import { exportFullBackup } from '$lib/services/storage';
+  import { db } from '$lib/services/database';
   import {
     encodeTrackToChunks, encodeObjectToChunks, encodeMarkerQr,
     parseAnyFormatToGpx, fetchAndParseUrl, encodeAnyFormatToChunks,
@@ -10,7 +11,7 @@
   import { app } from '$lib/stores/app.svelte';
   import QRScanner from '../../qr/QRScanner.svelte';
   import QRDisplay from '../../qr/QRDisplay.svelte';
-  import type { TrackCat } from '$lib/types';
+  import type { TrackCat, TrackShareData } from '$lib/types';
 
   type HubTab = 'import' | 'encode' | 'scan';
   let activeTab    = $state<HubTab>('import');
@@ -26,6 +27,7 @@
   let encodeSource = $state<'track' | 'marker' | 'project' | 'backup'>('track');
   let selTrackId   = $state('');
   let selMarkerId  = $state('');
+  let includeRuns  = $state(true);
 
   function showQr(chunks: string[], label: string) {
     qrChunks = chunks; qrLabel = label; errorMsg = '';
@@ -92,8 +94,25 @@
     try {
       const track = tracksStore.getTrack(id);
       if (!track) throw new Error('Track nicht gefunden');
-      const gpx = await tracksStore.getGpxWithFeatures(id) ?? track.gpxString;
-      showQr(encodeTrackToChunks(track, gpx), track.name);
+
+      // Alle Metadaten sammeln (Features, Rating, Beschreibung, Runs)
+      const meta: TrackShareData = {};
+      const features = tracksStore.getFeatures(id);
+      if (features.length > 0) meta.features = features;
+      const rating = tracksStore.getRating(id);
+      if (rating > 0) meta.rating = rating;
+      const desc = tracksStore.getDescription(id);
+      if (desc) meta.desc = desc;
+      const cond = tracksStore.getCondition(id);
+      if (cond !== 'unknown') meta.cond = cond;
+      const edits = tracksStore.getEdits(id);
+      if (edits.length > 0) meta.edits = edits;
+      if (includeRuns) {
+        const runs = await db.runs.where('trackId').equals(id).toArray();
+        if (runs.length > 0) meta.runs = runs;
+      }
+
+      showQr(encodeTrackToChunks(track, meta), track.name);
     } catch (ex) { errorMsg = (ex as Error).message; }
     finally { loading = false; }
   }
@@ -202,6 +221,11 @@
         {#if tracksStore.activeProjectTracks.length === 0}
           <p class="text-sm text-dim">Keine Tracks im aktiven Projekt.</p>
         {:else}
+          <p class="text-xs text-dim">Inkl. Schlüsselstellen, Bewertung, Beschreibung und optional Rennzeiten.</p>
+          <label style="display:flex;align-items:center;gap:0.5rem;cursor:pointer">
+            <input type="checkbox" bind:checked={includeRuns} style="accent-color:var(--ac);width:15px;height:15px" />
+            <span class="text-sm">Rennzeiten mit übertragen</span>
+          </label>
           <select class="input" bind:value={selTrackId}>
             <option value="">— Track auswählen —</option>
             {#each tracksStore.activeProjectTracks as t}

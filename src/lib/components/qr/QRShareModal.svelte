@@ -199,8 +199,19 @@
         <div class="card">
           <div class="form-label mb-2">🗺 Strecke als QR teilen</div>
           <div class="text-xs text-dim" style="margin-bottom:0.4rem">
+            Strecke inkl. Schlüsselstellen, Bewertung und optional Rennzeiten teilen.
             Auch selbst aufgenommene Strecken können geteilt werden.
           </div>
+
+          <!-- Runs Toggle -->
+          <div style="display:flex;align-items:center;gap:0.5rem;padding:0.4rem 0;border-bottom:1px solid var(--bd)">
+            <label style="display:flex;align-items:center;gap:0.5rem;cursor:pointer;flex:1">
+              <input type="checkbox" bind:checked={includeRuns}
+                style="accent-color:var(--ac);width:16px;height:16px" />
+              <span class="text-sm" style="font-weight:600;color:var(--tx)">Rennzeiten mit übertragen</span>
+            </label>
+          </div>
+
           {#each tracksStore.activeProjectTracks as track}
             <button
               style="width:100%;display:flex;align-items:center;gap:0.5rem;padding:0.5rem 0;border:none;background:none;cursor:pointer;color:var(--tx);text-align:left;border-bottom:1px solid var(--bd)"
@@ -258,12 +269,19 @@
         <span class="text-xs text-dim">Einzel-QR-Code</span>
       {/if}
 
+      <!-- Info über enthaltene Daten -->
+      {#if qrInfo}
+        <div style="background:rgba(200,255,0,0.08);border:1px solid color-mix(in srgb, var(--ac) 30%, var(--bd));border-radius:var(--r);padding:0.35rem 0.7rem;text-align:center">
+          <span class="text-xs" style="color:var(--ac);font-weight:600">{qrInfo}</span>
+        </div>
+      {/if}
+
       <QRDisplay {chunks} size={340} fps={2.5} />
 
       {#if chunks.length > 1}
         <p class="text-xs text-dim text-center" style="max-width:280px;line-height:1.5">
           Der Scanner sammelt automatisch alle Codes und fügt sie zu einer vollständigen GPX-Strecke zusammen.
-          Es funktioniert auch in beliebiger Reihenfolge.
+          Schlüsselstellen, Bewertung und Rennzeiten werden mit übertragen.
         </p>
       {/if}
       <button class="btn btn-secondary" onclick={reset}>← Zurück</button>

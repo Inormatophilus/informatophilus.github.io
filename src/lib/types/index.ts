@@ -57,8 +57,12 @@ export type FeatureType =
   | 'goal'
   | 'pause';
 
-/** Zustand der Streckenoberfläche */
-export type TrackCondition = 'dry' | 'muddy' | 'icy' | 'unknown';
+/** Zustand der Streckenoberfläche — Wetter ODER Pflegezustand */
+export type TrackCondition =
+  // Wetterzustand
+  | 'dry' | 'muddy' | 'icy' | 'unknown'
+  // Pflegezustand / Streckenzustand
+  | 'pristine' | 'good' | 'worn' | 'rough';
 
 export interface TrackFeature {
   id?: string;        // UUID — wird bei addFeature auto-generiert; optional für Migrations-Kompatibilität

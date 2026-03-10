@@ -374,6 +374,7 @@
 
     _L = await import('leaflet');
     app.enterFeaturePlacement();
+    mapStore.map.doubleClickZoom.disable(); // prevent dblclick zoom during placement
 
     if (!isEdit) {
       enableMapClicks();
@@ -401,6 +402,7 @@
       if (mapStore.map) {
         if (_clickH) mapStore.map.off('click', _clickH);
         mapStore.map.dragging.enable();
+        mapStore.map.doubleClickZoom.enable(); // restore dblclick zoom
       }
     } catch { /* ignore */ }
 

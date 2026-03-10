@@ -263,7 +263,8 @@
 
           // 1. Track in IndexedDB speichern → überlebt Neustart
           const newTrack = await tracksStore.loadGpxString(
-            gpxStr, decoded.name, (decoded.cat as TrackCat) || 'custom'
+            gpxStr, decoded.name, (decoded.cat as TrackCat) || 'custom',
+            undefined, true // silent — eigener Toast folgt
           );
 
           // 2. v2-Metadaten importieren (Features, Rating, Beschreibung, etc.)
@@ -350,7 +351,7 @@
       doneFlag = true;
       vibrateComplete();
       const { gpxStr, name, cat } = parseAnyFormatToGpx(raw);
-      await tracksStore.loadGpxString(gpxStr, name, (cat as TrackCat) || 'custom');
+      await tracksStore.loadGpxString(gpxStr, name, (cat as TrackCat) || 'custom', undefined, true);
       finish(`✓ Track "${name}" importiert`, 'ok');
       app.toast(`Track "${name}" importiert`, 'success');
     } catch (e) {
@@ -368,7 +369,7 @@
     try {
       const { gpxStr, name, cat } = await fetchAndParseUrl(url);
       vibrateComplete();
-      await tracksStore.loadGpxString(gpxStr, name, (cat as TrackCat) || 'custom');
+      await tracksStore.loadGpxString(gpxStr, name, (cat as TrackCat) || 'custom', undefined, true);
       finish(`✓ Track "${name}" von URL geladen`, 'ok');
       app.toast(`Track "${name}" importiert`, 'success');
     } catch (e) {

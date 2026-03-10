@@ -770,7 +770,7 @@ export function encodeAnyFormatToChunks(input: string, nameOverride?: string): s
     stats: { distKm: 0, elevGain: 0, elevLoss: 0, maxElev: 0, minElev: 0, durationMs: 0 },
     visible: true, projectId: '', createdAt: 0,
   };
-  return encodeTrackToChunks(fakeTrack, gpxStr);
+  return encodeTrackToChunks(fakeTrack);
 }
 
 // =============================================================================
